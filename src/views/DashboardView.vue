@@ -64,7 +64,7 @@
             <SchoolBarChart v-if="widget.key === 'schoolBar'"
               :schools="schoolBarData.schools" :averages="schoolBarData.averages" />
             <ScoreDistribution v-if="widget.key === 'scoreDist'"
-              :scores="allSevenEightScores" />
+              :scores="allAdmissionScores" />
             <AdmissionRadar v-if="widget.key === 'admissionRadar'"
               :long-run="admAvg.longRun" :rope-skipping="admAvg.ropeSkipping"
               :long-jump="admAvg.longJump" :ball-sports="admAvg.ballSports" :martial-arts="admAvg.martialArts" />
@@ -112,7 +112,7 @@ import SchoolStats from '@/components/dashboard/SchoolStats.vue'
 interface WidgetDef { key: string; label: string; wide?: boolean }
 const widgetList: WidgetDef[] = [
   { key: 'gradePie', label: '各年级人数分布' },
-  { key: 'schoolBar', label: '各学校平均分对比' },
+  { key: 'schoolBar', label: '中招体育考试平均分' },
   { key: 'scoreDist', label: '成绩分布直方图' },
   { key: 'admissionRadar', label: '中招各项目平均分' },
   { key: 'verifyPie', label: '校对结果统计' },
@@ -190,33 +190,29 @@ const schoolSet = computed(() => {
   return set
 })
 
-// 学校柱状图数据
+// 学校柱状图数据 - 中招体育考试成绩
 const schoolBarData = computed(() => {
   const map = new Map<string, { total: number; count: number }>()
-  const add = (item: any) => {
+  filteredAdmission.value.forEach((item: any) => {
     if (!item.school) return
     let entry = map.get(item.school) || { total: 0, count: 0 }
-    entry.total += Number(item.total || 0)
+    entry.total += Number(item.totalScore || 0)
     entry.count++
     map.set(item.school, entry)
-  }
-  filteredSeven.value.forEach(add)
-  filteredEight.value.forEach(add)
+  })
   const schools: string[] = []
   const averages: number[] = []
   map.forEach((v, k) => {
     if (v.count > 0) { schools.push(k); averages.push(Math.round(v.total / v.count * 10) / 10) }
   })
-  // 按平均分降序
   const paired = schools.map((s, i) => ({ s, a: averages[i] })).sort((x, y) => y.a - x.a)
   return { schools: paired.map(p => p.s), averages: paired.map(p => p.a) }
 })
 
-// 七/八年级成绩列表（用于分布直方图）
-const allSevenEightScores = computed(() => {
+// 中招成绩列表（用于分布直方图）
+const allAdmissionScores = computed(() => {
   const scores: number[] = []
-  filteredSeven.value.forEach((i: any) => scores.push(Number(i.total || 0)))
-  filteredEight.value.forEach((i: any) => scores.push(Number(i.total || 0)))
+  filteredAdmission.value.forEach((i: any) => scores.push(Number(i.totalScore || 0)))
   return scores
 })
 
