@@ -75,7 +75,17 @@
       
       <div class="import-summary">
         <el-statistic title="总记录数" :value="previewData.length" />
-        <el-statistic title="重复数据" :value="duplicateCount" value-style="color: #f56c6c" />
+        <el-popover placement="bottom" :width="400" trigger="hover" :disabled="duplicateCount === 0">
+          <template #reference>
+            <el-statistic title="重复数据" :value="duplicateCount" value-style="color: #f56c6c; cursor: pointer; text-decoration: underline" />
+          </template>
+          <el-table :data="duplicateList" border size="small" max-height="300">
+            <el-table-column type="index" label="序号" width="50" align="center" />
+            <el-table-column prop="school" label="学校" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="name" label="姓名" width="80" align="center" />
+            <el-table-column prop="idCard" label="身份证号" min-width="160" show-overflow-tooltip />
+          </el-table>
+        </el-popover>
         <el-statistic title="有效数据" :value="previewData.length - duplicateCount" value-style="color: #67c23a" />
       </div>
       
@@ -421,10 +431,13 @@ const processPreviewData = (jsonData: any[][]) => {
   }
   
   previewColumns.value = columns
-  
+
   const processedData: any[] = []
   duplicateList.value = []
-  
+  const pushedIds = new Set<string>()
+  // 本次导入文件内的身份证号去重检测
+  const idCardInFile = new Map<string, { school: string; name: string; idCard: string }>()
+
   rows.forEach((row, index) => {
     // 使用列映射安全读取，带兜底索引
     const school = cellVal(row, colMap, 'school', 0)
@@ -452,10 +465,25 @@ const processPreviewData = (jsonData: any[][]) => {
 
     const rowGrade = normalizeGradeValue(grade, detectedGrade.value)
 
+    // 检测导入文件内部的重复身份证号
+    if (idCard) {
+      const idKey = idCard.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()
+      if (idCardInFile.has(idKey)) {
+        const exist = idCardInFile.get(idKey)!
+        if (!pushedIds.has(idKey)) { duplicateList.value.push({ school: exist.school, name: exist.name, idCard: exist.idCard }); pushedIds.add(idKey) }
+        duplicateList.value.push({ school, name, idCard })
+        duplicateCount.value++
+      } else {
+        idCardInFile.set(idKey, { school, name, idCard })
+      }
+    }
+
+    // 检测与系统已有数据的重复
     const duplicates = gradeStore.checkDuplicateIdCard(idCard, rowGrade, grade)
-    if (duplicates.length > 0) {
+    if (duplicates.length > 0 && !pushedIds.has(identityId)) {
       duplicateList.value.push({ school, name, idCard })
       duplicateCount.value++
+      pushedIds.add(identityId)
     }
 
     const baseData = {
