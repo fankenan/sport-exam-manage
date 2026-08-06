@@ -75,7 +75,7 @@
       
       <div class="import-summary">
         <el-statistic title="总记录数" :value="previewData.length" />
-        <el-popover placement="bottom" :width="400" trigger="hover" :disabled="duplicateCount === 0">
+        <el-popover placement="bottom" :width="550" trigger="hover" :disabled="duplicateCount === 0">
           <template #reference>
             <el-statistic title="重复数据" :value="duplicateCount" value-style="color: #f56c6c; cursor: pointer; text-decoration: underline" />
           </template>
