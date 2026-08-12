@@ -390,6 +390,115 @@ router.delete('/:table/:id', authMiddleware, async (req, res) => {
   }
 })
 
+// ========== 重复数据处理 ==========
+
+// 暂存重复数据
+router.post('/duplicates', authMiddleware, async (req, res) => {
+  try {
+    const pool = getPool()
+    const { rows } = req.body
+    if (!rows || !Array.isArray(rows) || rows.length === 0) return fail(res, '无数据', 400)
+    let count = 0
+    for (const row of rows) {
+      const snake = camelToSnake(row)
+      const fields = ['school','name','id_card','identity_id','graduation_year','grade','grade_level',
+        'attendance_score','exam_score','fitness_score','total','total_verify','verify_result',
+        'long_run','rope_skipping','long_jump','ball_sports','martial_arts','remark']
+      const cols = fields.filter(f => snake[f] !== undefined)
+      const values = cols.map(f => snake[f])
+      await pool.query(`INSERT INTO grade_duplicates (${cols.join(',')}) VALUES (${cols.map(()=>'?').join(',')})`, values)
+      count++
+    }
+    ok(res, { count }, `已暂存 ${count} 条重复数据`)
+  } catch (err) {
+    console.error('[暂存重复数据错误]', err)
+    fail(res, '暂存失败')
+  }
+})
+
+// 获取重复数据列表
+router.get('/duplicates', authMiddleware, async (req, res) => {
+  try {
+    const pool = getPool()
+    const [rows] = await pool.query('SELECT * FROM grade_duplicates WHERE status = ? ORDER BY created_at DESC', ['pending'])
+    ok(res, snakeToCamel(rows))
+  } catch (err) {
+    console.error('[获取重复数据错误]', err)
+    fail(res, '获取失败')
+  }
+})
+
+// 编辑单条重复数据
+router.put('/duplicates/:id', authMiddleware, async (req, res) => {
+  try {
+    const pool = getPool()
+    const { id } = req.params
+    const snakeData = camelToSnake(req.body)
+    const fields = Object.keys(snakeData).filter(k => k !== 'id')
+    if (fields.length === 0) return fail(res, '无更新字段', 400)
+    const setClause = fields.map(f => `${f} = ?`).join(', ')
+    await pool.query(`UPDATE grade_duplicates SET ${setClause} WHERE id = ?`, [...fields.map(f => snakeData[f]), id])
+    ok(res, {}, '更新成功')
+  } catch (err) {
+    console.error('[更新重复数据错误]', err)
+    fail(res, '更新失败')
+  }
+})
+
+// 提交重复数据到正式表
+router.post('/duplicates/:id/submit', authMiddleware, async (req, res) => {
+  try {
+    const pool = getPool()
+    const { id } = req.params
+    const [rows] = await pool.query('SELECT * FROM grade_duplicates WHERE id = ?', [id])
+    if (rows.length === 0) return fail(res, '数据不存在', 404)
+    const data = rows[0]
+    const tableMap = { seven: 'grade_seven', eight: 'grade_eight', nine: 'grade_nine' }
+    const table = tableMap[data.grade_level]
+    if (!table) return fail(res, '无效的年级', 400)
+    // 生成新 ID 并写入
+    const newId = 'dup_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)
+    const fields = ['id','school','name','id_card','identity_id','graduation_year','grade',
+      'attendance_score','exam_score','fitness_score','total','total_verify','verify_result',
+      'long_run','rope_skipping','long_jump','ball_sports','martial_arts','remark']
+    const values = [newId, data.school, data.name, data.id_card, data.identity_id,
+      data.graduation_year, data.grade, data.attendance_score, data.exam_score, data.fitness_score,
+      data.total, data.total_verify, data.verify_result, data.long_run, data.rope_skipping,
+      data.long_jump, data.ball_sports, data.martial_arts, data.remark]
+    // 动态构建（只包含存在的字段）
+    const cols = []; const vals = []; let idx = 0
+    const allFields = ['id','school','name','id_card','identity_id','graduation_year','grade',
+      'attendance_score','exam_score','fitness_score','total','total_verify','verify_result',
+      'long_run','rope_skipping','long_jump','ball_sports','martial_arts','remark']
+    for (const f of allFields) {
+      if (values[idx] !== undefined && values[idx] !== null) { cols.push(f); vals.push(values[idx]) }
+      idx++
+    }
+    await pool.query(`INSERT INTO ${table} (${cols.join(',')}) VALUES (${cols.map(()=>'?').join(',')})`, vals)
+    // 更新状态
+    await pool.query('UPDATE grade_duplicates SET status=?, processed_by=?, processed_at=NOW() WHERE id=?',
+      ['submitted', req.user?.username || 'admin', id])
+    ok(res, {}, '提交成功')
+  } catch (err) {
+    console.error('[提交重复数据错误]', err)
+    fail(res, '提交失败：' + err.message)
+  }
+})
+
+// 删除重复数据（软删除）
+router.delete('/duplicates/:id', authMiddleware, async (req, res) => {
+  try {
+    const pool = getPool()
+    const { id } = req.params
+    await pool.query('UPDATE grade_duplicates SET status=?, processed_by=?, processed_at=NOW() WHERE id=?',
+      ['deleted', req.user?.username || 'admin', id])
+    ok(res, {}, '已删除')
+  } catch (err) {
+    console.error('[删除重复数据错误]', err)
+    fail(res, '操作失败')
+  }
+})
+
 // ========== 学校上报统计 ==========
 
 router.get('/school-stats', authMiddleware, async (req, res) => {

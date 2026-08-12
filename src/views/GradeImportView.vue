@@ -529,7 +529,7 @@ const processPreviewData = (jsonData: any[][]) => {
   previewData.value = processedData
 }
 
-const processImport = () => {
+const processImport = async () => {
   if (detectedGrade.value === 'unknown') {
     ElMessageBox.confirm(
       '系统无法自动识别该文件的年级类型，请手动选择。',
@@ -574,6 +574,27 @@ const processImport = () => {
   }
 
   if (duplicateList.value.length > 0) {
+    // 暂存重复数据到后端
+    try {
+      const dupRows = duplicateList.value.map(d => {
+        const item = previewData.value.find(p => p.idCard === d.idCard)
+        return item ? {
+          school: item.school, name: item.name, idCard: item.idCard,
+          identityId: item.identityId, graduationYear: item.graduationYear,
+          grade: item.grade, gradeLevel: detectedGrade.value,
+          attendanceScore: item.attendanceScore, examScore: item.examScore,
+          fitnessScore: item.fitnessScore, total: item.total,
+          totalVerify: item.totalVerify, verifyResult: item.verifyResult === '✅' ? 1 : 0,
+          longRun: item.longRun, ropeSkipping: item.ropeSkipping,
+          longJump: item.longJump, ballSports: item.ballSports,
+          martialArts: item.martialArts, remark: item.remark
+        } : d
+      }).filter(Boolean)
+      await dataApi.saveDuplicates(dupRows)
+      ElMessage.warning(`已检测到 ${duplicateList.value.length} 条重复数据，已暂存到成绩审核-重复处理中`)
+    } catch (e: any) {
+      ElMessage.error('暂存重复数据失败：' + (e.message || '未知错误'))
+    }
     duplicateDialogVisible.value = true
   } else {
     confirmImport()

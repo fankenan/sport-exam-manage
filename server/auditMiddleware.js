@@ -58,6 +58,12 @@ function auditMiddleware(options) {
           }
         }
 
+        // 限制 details 大小，防止超大日志
+        var detailsStr = JSON.stringify(details);
+        if (detailsStr.length > 5000) {
+          details = { summary: details.summary || '操作数据过大已截断', _truncated: true, _originalSize: detailsStr.length };
+        }
+
         logOperation(req.app.locals.pool || req.app.get('pool'), {
           operator: operator,
           operationType: operationType,

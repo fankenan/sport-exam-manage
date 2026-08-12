@@ -149,6 +149,21 @@ export const dataApi = {
   getYears: () =>
     request('/data/years'),
 
+  // 重复数据处理
+  saveDuplicates: (rows: any[]) =>
+    request('/data/duplicates', { method: 'POST', body: JSON.stringify({ rows }) }),
+
+  getDuplicates: () => request('/data/duplicates'),
+
+  updateDuplicate: (id: number, data: Record<string, any>) =>
+    request(`/data/duplicates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  submitDuplicate: (id: number) =>
+    request(`/data/duplicates/${id}/submit`, { method: 'POST' }),
+
+  deleteDuplicate: (id: number) =>
+    request(`/data/duplicates/${id}`, { method: 'DELETE' }),
+
   // 学校上报统计
   getSchoolStats: (year: string) => {
     return request(`/data/school-stats?year=${encodeURIComponent(year)}`)
