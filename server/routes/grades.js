@@ -363,6 +363,85 @@ router.post('/clear', authMiddleware, auditMiddleware({ operationType: 'delete',
   }
 })
 
+// ========== 重复数据处理 ==========
+
+router.post('/duplicates', authMiddleware, async (req, res) => {
+  try {
+    const pool = getPool()
+    const { rows } = req.body
+    if (!rows || !Array.isArray(rows) || rows.length === 0) return fail(res, '无数据', 400)
+    let count = 0
+    for (const row of rows) {
+      const snake = camelToSnake(row)
+      const fields = ['school','name','id_card','identity_id','graduation_year','grade','grade_level',
+        'attendance_score','exam_score','fitness_score','total','total_verify','verify_result',
+        'long_run','rope_skipping','long_jump','ball_sports','martial_arts','remark']
+      const cols = fields.filter(f => snake[f] !== undefined)
+      const values = cols.map(f => snake[f])
+      if (cols.length > 0) {
+        await pool.query(`INSERT INTO grade_duplicates (${cols.join(',')}) VALUES (${cols.map(()=>'?').join(',')})`, values)
+        count++
+      }
+    }
+    ok(res, { count }, `已暂存 ${count} 条重复数据`)
+  } catch (err) {
+    console.error('[暂存重复数据错误]', err)
+    fail(res, '暂存失败')
+  }
+})
+
+router.get('/duplicates', authMiddleware, async (req, res) => {
+  try {
+    const pool = getPool()
+    const [rows] = await pool.query('SELECT * FROM grade_duplicates WHERE status = ? ORDER BY created_at DESC', ['pending'])
+    ok(res, snakeToCamel(rows))
+  } catch (err) { console.error('[获取重复数据错误]', err); fail(res, '获取失败') }
+})
+
+router.put('/duplicates/:id', authMiddleware, async (req, res) => {
+  try {
+    const pool = getPool()
+    const snakeData = camelToSnake(req.body)
+    const fields = Object.keys(snakeData).filter(k => k !== 'id' && k !== 'created_at' && k !== 'processed_at')
+    if (fields.length === 0) return fail(res, '无更新字段', 400)
+    const setClause = fields.map(f => `${f} = ?`).join(', ')
+    await pool.query(`UPDATE grade_duplicates SET ${setClause} WHERE id = ?`, [...fields.map(f => snakeData[f]), req.params.id])
+    ok(res, {}, '更新成功')
+  } catch (err) { console.error('[更新重复数据错误]', err); fail(res, '更新失败') }
+})
+
+router.post('/duplicates/:id/submit', authMiddleware, async (req, res) => {
+  const pool = getPool()
+  try {
+    const [rows] = await pool.query('SELECT * FROM grade_duplicates WHERE id = ?', [req.params.id])
+    if (rows.length === 0) return fail(res, '数据不存在', 404)
+    const d = rows[0]
+    const tableMap = { seven: 'grade_seven', eight: 'grade_eight', nine: 'grade_nine' }
+    const table = tableMap[d.grade_level]
+    if (!table) return fail(res, '无效年级', 400)
+    const newId = 'dup_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)
+    const allFields = ['id','school','name','id_card','identity_id','graduation_year','grade',
+      'attendance_score','exam_score','fitness_score','total','total_verify','verify_result',
+      'long_run','rope_skipping','long_jump','ball_sports','martial_arts','remark']
+    const vals = [newId,d.school,d.name,d.id_card,d.identity_id,d.graduation_year,d.grade,
+      d.attendance_score,d.exam_score,d.fitness_score,d.total,d.total_verify,d.verify_result,
+      d.long_run,d.rope_skipping,d.long_jump,d.ball_sports,d.martial_arts,d.remark]
+    const cols=[]; const v2=[]; let idx=0;
+    for (const f of allFields) { if (vals[idx] != null) { cols.push(f); v2.push(vals[idx]) } idx++ }
+    await pool.query(`INSERT INTO ${table} (${cols.join(',')}) VALUES (${cols.map(()=>'?').join(',')})`, v2)
+    await pool.query('UPDATE grade_duplicates SET status=?,processed_by=?,processed_at=NOW() WHERE id=?',['submitted',req.user?.username||'admin',req.params.id])
+    ok(res, {}, '提交成功')
+  } catch (err) { console.error('[提交重复数据错误]', err); fail(res, '提交失败：'+err.message) }
+})
+
+router.delete('/duplicates/:id', authMiddleware, async (req, res) => {
+  try {
+    await getPool().query('UPDATE grade_duplicates SET status=?,processed_by=?,processed_at=NOW() WHERE id=?',
+      ['deleted', req.user?.username || 'admin', req.params.id])
+    ok(res, {}, '已删除')
+  } catch (err) { console.error('[删除重复数据错误]', err); fail(res, '操作失败') }
+})
+
 // ========== 单条删除 ==========
 
 router.delete('/:table/:id', authMiddleware, async (req, res) => {

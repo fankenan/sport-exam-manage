@@ -198,6 +198,25 @@ async function initDatabase() {
     await initConn.query(`ALTER TABLE admission ADD COLUMN remark TEXT`)
   } catch { /* 列已存在则忽略 */ }
 
+  // 重复数据暂存表
+  await initConn.query(`
+    CREATE TABLE IF NOT EXISTS grade_duplicates (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      school VARCHAR(200), name VARCHAR(100), id_card VARCHAR(50),
+      identity_id VARCHAR(50), graduation_year VARCHAR(20),
+      grade VARCHAR(20), grade_level VARCHAR(10),
+      attendance_score DECIMAL(10,1), exam_score DECIMAL(10,1),
+      fitness_score DECIMAL(10,1), total DECIMAL(10,1),
+      total_verify DECIMAL(10,1), verify_result TINYINT,
+      long_run DECIMAL(10,1), rope_skipping DECIMAL(10,1),
+      long_jump DECIMAL(10,1), ball_sports DECIMAL(10,1),
+      martial_arts DECIMAL(10,1), remark TEXT,
+      status VARCHAR(20) DEFAULT 'pending',
+      processed_by VARCHAR(50), processed_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `)
+
   // 成绩复核申请表
   await initConn.query(`
     CREATE TABLE IF NOT EXISTS grade_reconsiderations (

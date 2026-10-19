@@ -90,7 +90,7 @@
       </div>
       
       <div class="import-actions-bottom">
-        <el-button type="primary" size="large" :loading="importing" @click="confirmImport">
+        <el-button type="primary" size="large" :loading="importing" :disabled="authStore.isSchoolUser && duplicateCount > 0" @click="confirmImport">
           确认导入
         </el-button>
         <el-button type="default" size="large" @click="clearPreview">取消</el-button>
@@ -103,7 +103,7 @@
       width="700px"
     >
       <el-alert
-        title="以下数据在系统中已存在，点击确认将排除重复数据，仅导入唯一数据"
+        :title="authStore.isSchoolUser ? '以下数据在系统中已存在，学校账号无法导入重复数据，请联系管理员处理' : '以下数据在系统中已存在，点击确认将排除重复数据，仅导入唯一数据'"
         type="warning"
         :closable="false"
         show-icon
@@ -116,7 +116,7 @@
       </el-table>
       <template #footer>
         <el-button type="default" @click="duplicateDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleDuplicateConfirm">
+        <el-button v-if="!authStore.isSchoolUser" type="primary" @click="handleDuplicateConfirm">
           确认（排除重复）
         </el-button>
       </template>
@@ -149,7 +149,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled, Download } from '@element-plus/icons-vue'
 import * as XLSX from 'xlsx'
@@ -529,7 +529,20 @@ const processPreviewData = (jsonData: any[][]) => {
   previewData.value = processedData
 }
 
-const processImport = () => {
+// 页面加载时同步数据，确保重复检测能对比系统已有数据
+onMounted(async () => {
+  try {
+    const res = await dataApi.sync()
+    if (res) {
+      gradeStore.gradeSevenList = res.gradeSevenList || []
+      gradeStore.gradeEightList = res.gradeEightList || []
+      gradeStore.gradeNineList = res.gradeNineList || []
+      gradeStore.admissionList = res.admissionList || []
+    }
+  } catch { /* ignore */ }
+})
+
+const processImport = async () => {
   if (detectedGrade.value === 'unknown') {
     ElMessageBox.confirm(
       '系统无法自动识别该文件的年级类型，请手动选择。',
@@ -574,6 +587,29 @@ const processImport = () => {
   }
 
   if (duplicateList.value.length > 0) {
+    // 暂存重复数据到后端
+    try {
+      const dupRows = duplicateList.value.map(d => {
+        const item = previewData.value.find(p => p.idCard === d.idCard)
+        if (!item) return null
+        return {
+          school: item.school || '', name: item.name || '', idCard: item.idCard || '',
+          identityId: item.identityId || '', graduationYear: item.graduationYear || '',
+          grade: item.grade || '', gradeLevel: detectedGrade.value,
+          attendanceScore: item.attendanceScore ?? null, examScore: item.examScore ?? null,
+          fitnessScore: item.fitnessScore ?? null, total: item.total ?? null,
+          totalVerify: item.totalVerify ?? null,
+          verifyResult: (item.verifyResult === '✅' || item.verifyResult === true) ? 1 : 0,
+          longRun: item.longRun ?? null, ropeSkipping: item.ropeSkipping ?? null,
+          longJump: item.longJump ?? null, ballSports: item.ballSports ?? null,
+          martialArts: item.martialArts ?? null,
+          remark: item.remark || ''
+        }
+      }).filter(Boolean)
+      if (dupRows.length > 0) {
+        await dataApi.saveDuplicates(dupRows)
+      }
+    } catch (e: any) { console.error('暂存重复数据失败', e) }
     duplicateDialogVisible.value = true
   } else {
     confirmImport()
