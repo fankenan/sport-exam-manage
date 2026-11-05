@@ -8,6 +8,10 @@
         </div>
       </div>
       <div class="header-actions">
+        <el-button type="success" plain @click="openRosterImport">
+          <el-icon><Upload /></el-icon>
+          导入报名名单
+        </el-button>
         <el-button type="primary" plain @click="openScoreImport">
           <el-icon><UploadFilled /></el-icon>
           导入九年级成绩
@@ -168,14 +172,68 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 导入报名名单弹窗（管理员，多校合并） -->
+    <el-dialog v-model="rosterDialogVisible" title="导入报名名单" width="680px">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 14px"
+        title="用于学校没能上报、或名单由教育局统一提供的情况。导入后视为已审核通过，报名信息直接写入九年级成绩表与中招体育成绩表，之后再用「导入九年级成绩」录分数。"
+      />
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 14px"
+        title="名单可以包含多所学校，但每行都必须填「学校」。列格式与学校报名表一致：学校 / 姓名 / 性别 / 身份证 / 报名序号 / 毕业年份 / 年级 / 项目1~5 / 备注。备注有内容时项目列必须留空。"
+      />
+      <el-upload
+        drag
+        action="#"
+        :auto-upload="false"
+        :on-change="onRosterFileChange"
+        :show-file-list="false"
+        accept=".xlsx,.xls"
+      >
+        <el-icon class="upload-icon"><Upload /></el-icon>
+        <div class="upload-text">点击选择或拖拽报名表到此处</div>
+        <div class="upload-tip">.xlsx / .xls，不超过 10MB，单次最多 5 万行</div>
+      </el-upload>
+      <div v-if="rosterFileName" class="score-file">
+        已选择：<b>{{ rosterFileName }}</b>
+      </div>
+      <el-alert
+        v-if="rosterErrors.length > 0"
+        type="error"
+        :closable="false"
+        show-icon
+        style="margin-top: 14px"
+        :title="`发现 ${rosterErrors.length} 处问题，名单未导入`"
+      />
+      <el-table v-if="rosterErrors.length > 0" :data="rosterErrors" border size="small" max-height="240" style="margin-top: 10px">
+        <el-table-column prop="row" label="Excel行号" width="90" align="center" />
+        <el-table-column prop="field" label="字段" width="140" />
+        <el-table-column prop="message" label="错误说明" min-width="280" show-overflow-tooltip />
+      </el-table>
+      <template #footer>
+        <el-button @click="rosterDialogVisible = false">关闭</el-button>
+        <el-button plain @click="downloadRosterTemplate">下载报名表模板</el-button>
+        <el-button type="primary" :loading="importingRoster" :disabled="!rosterFile" @click="doImportRoster">
+          导入名单
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
-import { UploadFilled, Download, Refresh } from '@element-plus/icons-vue'
+import { UploadFilled, Download, Refresh, Upload } from '@element-plus/icons-vue'
+import { ElMessageBox } from 'element-plus'
 import { registrationApi, dataApi } from '@/api'
-import { loadXLSX, parseNineScoreFile } from '@/utils/excel'
+import { loadXLSX, parseNineScoreFile, parseRegistrationFile } from '@/utils/excel'
 import { formatDateTime } from '@/utils/date'
 import { useAutoColumns } from '@/composables/useAutoColumns'
 
@@ -226,6 +284,13 @@ const scoreDialogVisible = ref(false)
 const scoreFile = ref<File | null>(null)
 const scoreFileName = ref('')
 const scoreErrors = ref<any[]>([])
+
+// 管理员直接导入报名名单
+const rosterDialogVisible = ref(false)
+const rosterFile = ref<File | null>(null)
+const rosterFileName = ref('')
+const rosterErrors = ref<any[]>([])
+const importingRoster = ref(false)
 
 const formatTime = (t?: string) => formatDateTime(t)
 
@@ -396,6 +461,70 @@ const doImportScores = async () => {
   }
 }
 
+// ========== 导入报名名单（管理员） ==========
+
+const openRosterImport = () => {
+  rosterFile.value = null
+  rosterFileName.value = ''
+  rosterErrors.value = []
+  rosterDialogVisible.value = true
+}
+
+const onRosterFileChange = (file: any) => {
+  const raw: File | undefined = file?.raw
+  if (!raw) return
+  if (raw.size > 10 * 1024 * 1024) {
+    ElMessage.error('文件大小超过 10MB 限制')
+    return
+  }
+  rosterFile.value = raw
+  rosterFileName.value = raw.name
+  rosterErrors.value = []
+}
+
+const doImportRoster = async () => {
+  if (!rosterFile.value) return
+  try {
+    await ElMessageBox.confirm(
+      '导入后这些学生会被视为「已审核通过」，报名信息立即写入九年级成绩表与中招体育成绩表（成绩为空）。确定继续吗？',
+      '导入报名名单',
+      { type: 'warning', confirmButtonText: '确认导入', cancelButtonText: '再检查一下' },
+    )
+  } catch {
+    return
+  }
+
+  importingRoster.value = true
+  rosterErrors.value = []
+  try {
+    const { rows } = await parseRegistrationFile(rosterFile.value)
+    if (rows.length === 0) {
+      ElMessage.error('文件中没有可导入的报名数据')
+      return
+    }
+    const res = await registrationApi.adminImport({ rows })
+    ElMessage.success(`已导入 ${res.count} 人（新增 ${res.inserted}，更新 ${res.updated}），报名信息已写入两张成绩表`)
+    rosterDialogVisible.value = false
+    await load()
+    await loadSchoolOptions()
+  } catch (err: any) {
+    if (err?.errors && Array.isArray(err.errors)) {
+      rosterErrors.value = err.errors
+    }
+    ElMessage.error('导入失败：' + (err.message || '未知错误'))
+  } finally {
+    importingRoster.value = false
+  }
+}
+
+const downloadRosterTemplate = async () => {
+  try {
+    await registrationApi.downloadTemplate()
+  } catch (err: any) {
+    ElMessage.error('模板下载失败：' + (err?.message || ''))
+  }
+}
+
 const downloadScoreTemplate = async () => {
   try {
     await registrationApi.downloadScoreTemplate()
@@ -404,10 +533,14 @@ const downloadScoreTemplate = async () => {
   }
 }
 
-onMounted(async () => {
+const loadSchoolOptions = async () => {
   try {
     schoolOptions.value = await dataApi.getSchools()
   } catch { /* ignore */ }
+}
+
+onMounted(async () => {
+  await loadSchoolOptions()
   await load()
 })
 </script>

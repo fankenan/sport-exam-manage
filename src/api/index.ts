@@ -398,6 +398,13 @@ export const registrationApi = {
       body: JSON.stringify({ reason }),
     }),
 
+  /** 管理员直接导入报名名单（多校合并，导入即视为审核通过） */
+  adminImport: (data: { rows: any[] }) =>
+    request('/registrations/admin-import', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   /** 管理员导入成绩（按身份证号匹配报名名单）；dryRun=true 只预检不写库 */
   importScores: (data: { year: string; rows: any[]; dryRun?: boolean }) =>
     request('/registrations/import-scores', {

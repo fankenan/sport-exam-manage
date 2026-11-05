@@ -485,6 +485,58 @@ router.get('/', authMiddleware, async (req, res) => {
 
 // ========== 管理员审核通过 → 写入九年级成绩表与中招成绩表 ==========
 
+/**
+ * 把一条报名记录的基本信息写进九年级成绩表与中招体育成绩表（成绩列留空）。
+ * 「审核通过」和「管理员直接导入名单」共用这一份实现。
+ */
+async function writeRegistrationToTables(connection, reg) {
+  // 生成稳定的记录 id（用身份标识，重复写入不会产生重复行）
+  const nineRow = {
+    id: `nine_${reg.identity_id}`,
+    school: reg.school,
+    name: reg.name,
+    id_card: reg.id_card,
+    identity_id: reg.identity_id,
+    student_number: reg.registration_number,
+    graduation_year: reg.graduation_year,
+    grade: reg.grade,
+    long_run: null, rope_skipping: null, long_jump: null,
+    ball_sports: null, martial_arts: null,
+    remark: reg.remark,
+    review_status: 'published',
+  }
+  applyDerivedFields('grade_nine', [nineRow])
+  await upsertRow(connection, 'grade_nine', nineRow, [
+    'id', 'school', 'name', 'id_card', 'identity_id', 'student_number', 'graduation_year',
+    'grade', 'long_run', 'rope_skipping', 'long_jump', 'ball_sports', 'martial_arts',
+    'remark', 'review_status',
+  ])
+
+  const admRow = {
+    id: `adm_${reg.identity_id}`,
+    identity_id: reg.identity_id,
+    school: reg.school,
+    name: reg.name,
+    id_card: reg.id_card,
+    registration_number: reg.registration_number,
+    graduation_year: reg.graduation_year,
+    grade: reg.grade,
+    grade_seven: null, grade_eight: null,
+    long_run: null, rope_skipping: null, long_jump: null,
+    ball_sports: null, martial_arts: null,
+    total_score: null,
+    remark: reg.remark,
+    review_status: 'published',
+  }
+  applyDerivedFields('admission', [admRow])
+  await upsertRow(connection, 'admission', admRow, [
+    'id', 'identity_id', 'school', 'name', 'id_card', 'registration_number',
+    'graduation_year', 'grade', 'grade_seven', 'grade_eight',
+    'long_run', 'rope_skipping', 'long_jump', 'ball_sports', 'martial_arts',
+    'total_score', 'remark', 'review_status',
+  ])
+}
+
 router.post('/:id/approve', authMiddleware, requireAdmin, auditMiddleware({ operationType: 'update', targetTable: 'grade_nine_registrations' }), async (req, res) => {
   const connection = await getPool().getConnection()
   try {
@@ -497,56 +549,7 @@ router.post('/:id/approve', authMiddleware, requireAdmin, auditMiddleware({ oper
 
     await connection.beginTransaction()
 
-    // 生成稳定的记录 id（用身份标识，重复审核不会产生重复行）
-    const nineId = `nine_${reg.identity_id}`
-    const admId = `adm_${reg.identity_id}`
-
-    // 1) 九年级成绩表：写入基本信息，各项成绩留空
-    const nineRow = {
-      id: nineId,
-      school: reg.school,
-      name: reg.name,
-      id_card: reg.id_card,
-      identity_id: reg.identity_id,
-      student_number: reg.registration_number,
-      graduation_year: reg.graduation_year,
-      grade: reg.grade,
-      long_run: null, rope_skipping: null, long_jump: null,
-      ball_sports: null, martial_arts: null,
-      remark: reg.remark,
-      review_status: 'published',
-    }
-    applyDerivedFields('grade_nine', [nineRow])
-    await upsertRow(connection, 'grade_nine', nineRow, [
-      'id', 'school', 'name', 'id_card', 'identity_id', 'student_number', 'graduation_year',
-      'grade', 'long_run', 'rope_skipping', 'long_jump', 'ball_sports', 'martial_arts',
-      'remark', 'review_status',
-    ])
-
-    // 2) 中招体育成绩表：写入基本信息与报名序号
-    const admRow = {
-      id: admId,
-      identity_id: reg.identity_id,
-      school: reg.school,
-      name: reg.name,
-      id_card: reg.id_card,
-      registration_number: reg.registration_number,
-      graduation_year: reg.graduation_year,
-      grade: reg.grade,
-      grade_seven: null, grade_eight: null,
-      long_run: null, rope_skipping: null, long_jump: null,
-      ball_sports: null, martial_arts: null,
-      total_score: null,
-      remark: reg.remark,
-      review_status: 'published',
-    }
-    applyDerivedFields('admission', [admRow])
-    await upsertRow(connection, 'admission', admRow, [
-      'id', 'identity_id', 'school', 'name', 'id_card', 'registration_number',
-      'graduation_year', 'grade', 'grade_seven', 'grade_eight',
-      'long_run', 'rope_skipping', 'long_jump', 'ball_sports', 'martial_arts',
-      'total_score', 'remark', 'review_status',
-    ])
+    await writeRegistrationToTables(connection, reg)
 
     await connection.query(
       `UPDATE grade_nine_registrations
@@ -620,36 +623,7 @@ router.post('/batch-approve', authMiddleware, requireAdmin, auditMiddleware({ op
       const reg = rows[0]
       if (reg.status === STATUS.SCORED) continue
 
-      const nineRow = {
-        id: `nine_${reg.identity_id}`, school: reg.school, name: reg.name,
-        id_card: reg.id_card, identity_id: reg.identity_id,
-        student_number: reg.registration_number, graduation_year: reg.graduation_year,
-        grade: reg.grade, long_run: null, rope_skipping: null, long_jump: null,
-        ball_sports: null, martial_arts: null, remark: reg.remark, review_status: 'published',
-      }
-      applyDerivedFields('grade_nine', [nineRow])
-      await upsertRow(connection, 'grade_nine', nineRow, [
-        'id', 'school', 'name', 'id_card', 'identity_id', 'student_number', 'graduation_year',
-        'grade', 'long_run', 'rope_skipping', 'long_jump', 'ball_sports', 'martial_arts',
-        'remark', 'review_status',
-      ])
-
-      const admRow = {
-        id: `adm_${reg.identity_id}`, identity_id: reg.identity_id, school: reg.school,
-        name: reg.name, id_card: reg.id_card, registration_number: reg.registration_number,
-        graduation_year: reg.graduation_year, grade: reg.grade,
-        grade_seven: null, grade_eight: null,
-        long_run: null, rope_skipping: null, long_jump: null,
-        ball_sports: null, martial_arts: null, total_score: null,
-        remark: reg.remark, review_status: 'published',
-      }
-      applyDerivedFields('admission', [admRow])
-      await upsertRow(connection, 'admission', admRow, [
-        'id', 'identity_id', 'school', 'name', 'id_card', 'registration_number',
-        'graduation_year', 'grade', 'grade_seven', 'grade_eight',
-        'long_run', 'rope_skipping', 'long_jump', 'ball_sports', 'martial_arts',
-        'total_score', 'remark', 'review_status',
-      ])
+      await writeRegistrationToTables(connection, reg)
 
       await connection.query(
         `UPDATE grade_nine_registrations SET status = ?, reviewed_by = ?, reviewed_at = NOW() WHERE id = ?`,
@@ -663,6 +637,109 @@ router.post('/batch-approve', authMiddleware, requireAdmin, auditMiddleware({ op
     await connection.rollback()
     console.error('[批量审核报名错误]', err)
     fail(res, '批量审核失败：' + err.message)
+  } finally {
+    connection.release()
+  }
+})
+
+// ========== 管理员直接导入报名名单 ==========
+// 场景：学校没能上报、或名单由教育局统一提供。导入后视为已审核通过：
+// 直接写入九年级成绩表与中招体育成绩表，等待后续导入成绩。
+
+router.post('/admin-import', authMiddleware, requireAdmin, auditMiddleware({ operationType: 'create', targetTable: 'grade_nine_registrations' }), async (req, res) => {
+  const connection = await getPool().getConnection()
+  try {
+    const { rows } = req.body
+    if (!Array.isArray(rows) || rows.length === 0) return fail(res, '无数据', 400)
+    if (rows.length > 50000) return fail(res, '单次导入不能超过 50000 行', 400)
+
+    // 管理员导入的是多校合并的名单，学校必须来自文件
+    const { errors, rows: parsed } = validateRegistrationRows(rows, '')
+    parsed.forEach((r, i) => {
+      if (!r.school) errors.push({ row: i + 2, field: 'school', message: '缺少学校名称（管理员导入时可以含多所学校，每行都要填）' })
+    })
+    if (errors.length > 0) {
+      return fail(res, `数据校验失败，共 ${errors.length} 条错误`, 400, {
+        errors: errors.slice(0, 500), errorCount: errors.length,
+      })
+    }
+
+    await connection.beginTransaction()
+
+    let inserted = 0
+    let updated = 0
+    // 已导入成绩的学生不能再改报名信息（成绩表里的分项已按当时的项目落库）
+    const locked = []
+
+    for (const r of parsed) {
+      const [existed] = await connection.query(
+        `SELECT id, status FROM grade_nine_registrations
+         WHERE identity_id = ? AND school = ? AND status != 'rejected'`,
+        [r.identity_id, r.school],
+      )
+      if (existed.length > 0 && existed[0].status === STATUS.SCORED) {
+        locked.push(r.name)
+        continue
+      }
+
+      const values = [
+        r.school, r.name, r.gender, r.id_card, r.identity_id, r.registration_number,
+        r.graduation_year, r.grade, r.long_run_event, r.rope_skipping_event,
+        r.long_jump_event, r.ball_event, r.martial_arts_event, r.remark,
+        JSON.stringify(r.raw), STATUS.APPROVED, req.user?.username || '',
+        req.user?.username || 'admin',
+      ]
+
+      if (existed.length > 0) {
+        await connection.query(
+          `UPDATE grade_nine_registrations SET
+             school=?, name=?, gender=?, id_card=?, identity_id=?, registration_number=?,
+             graduation_year=?, grade=?, long_run_event=?, rope_skipping_event=?,
+             long_jump_event=?, ball_event=?, martial_arts_event=?, remark=?, raw=?,
+             status=?, uploaded_by=?, reviewed_by=?, reviewed_at=NOW(),
+             reject_reason='', scored_at=NULL
+           WHERE id = ?`,
+          [...values, existed[0].id],
+        )
+        updated++
+      } else {
+        await connection.query(
+          `INSERT INTO grade_nine_registrations
+            (school, name, gender, id_card, identity_id, registration_number,
+             graduation_year, grade, long_run_event, rope_skipping_event,
+             long_jump_event, ball_event, martial_arts_event, remark, raw,
+             status, uploaded_by, reviewed_by, reviewed_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())`,
+          values,
+        )
+        inserted++
+      }
+
+      // 导入即视为审核通过，直接写进两张成绩表（成绩列留空）
+      await writeRegistrationToTables(connection, r)
+    }
+
+    if (locked.length > 0) {
+      await connection.rollback()
+      return fail(
+        res,
+        `以下学生已导入成绩，报名信息不能再修改：${locked.slice(0, 20).join('、')}${locked.length > 20 ? ` 等 ${locked.length} 人` : ''}。如需修改，请联系系统管理员处理成绩表`,
+        400,
+        { locked, lockedCount: locked.length },
+      )
+    }
+
+    await connection.commit()
+    ok(res, {
+      count: parsed.length,
+      inserted,
+      updated,
+      _audit: { summary: `管理员导入九年级报名名单 ${parsed.length} 人（已直接写入两张成绩表）` },
+    }, `已导入 ${parsed.length} 人，报名信息已写入九年级成绩表与中招体育成绩表`)
+  } catch (err) {
+    await connection.rollback()
+    console.error('[管理员导入报名名单错误]', err)
+    fail(res, '导入失败：' + err.message)
   } finally {
     connection.release()
   }

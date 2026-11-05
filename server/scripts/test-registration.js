@@ -176,6 +176,42 @@ async function main() {
     reSubmit.status === 400 && /已导入成绩/.test(reSubmit.json?.message || ''),
     `status=${reSubmit.status} ${reSubmit.json?.message}`)
 
+  // ---------- 7b. 管理员直接导入报名名单 ----------
+  console.log('\n[7b] 管理员直接导入报名名单')
+  const adminRows = [
+    { school: '实验第二中学', name: '教局导入甲', gender: '男', id_card: '310101201101066051', registration_number: '883001', graduation_year: '2026', grade: '九年级', long_run_event: '1000米', rope_skipping_event: '跳绳', long_jump_event: '跳远', ball_event: '足球', martial_arts_event: '武术', remark: '' },
+    { school: '实验第二中学', name: '教局导入乙', gender: '女', id_card: '310101201101066062', registration_number: '883002', graduation_year: '2026', grade: '九年级', long_run_event: '', ball_event: '', remark: '弃考' },
+  ]
+  const adminImport = await call('/registrations/admin-import', { method: 'POST', token: admin, body: { rows: adminRows } })
+  check('管理员导入报名名单成功', adminImport.status === 200 && adminImport.json?.data?.count === 2,
+    `status=${adminImport.status} ${JSON.stringify(adminImport.json).slice(0, 200)}`)
+
+  const importedNine = await call('/data/page/grade_nine?keyword=310101201101066051', { token: admin })
+  const impNine = (importedNine.json?.data?.list || [])[0]
+  check('管理员导入后九年级表已有基本信息',
+    impNine?.studentNumber === '883001' && impNine?.graduationYear === '2026',
+    JSON.stringify(impNine).slice(0, 200))
+
+  const importedAdm = await call('/data/page/admission?keyword=310101201101066051', { token: admin })
+  const impAdm = (importedAdm.json?.data?.list || [])[0]
+  check('管理员导入后中招表已有报名序号', impAdm?.registrationNumber === '883001',
+    JSON.stringify(impAdm).slice(0, 200))
+
+  const impList = await call('/registrations?page=1&pageSize=50&keyword=3101012011010660', { token: admin })
+  const impRegs = (impList.json?.data?.list || [])
+    .filter(r => ['310101201101066051', '310101201101066062'].includes(r.identityId))
+  check('管理员导入的名单状态为「待导入成绩」且审核人为管理员',
+    impRegs.length === 2 && impRegs.every(r => r.status === 'approved' && r.reviewedBy === 'admin'),
+    JSON.stringify(impRegs.map(r => ({ n: r.name, s: r.status, b: r.reviewedBy }))).slice(0, 200))
+
+  const noSchool = await call('/registrations/admin-import', {
+    method: 'POST', token: admin,
+    body: { rows: [{ name: '无学校', gender: '男', id_card: '310101201101066073', registration_number: '883003', graduation_year: '2026', grade: '九年级', long_run_event: '1000米' }] },
+  })
+  check('管理员导入缺学校被拦下',
+    noSchool.status === 400 && (noSchool.json?.data?.errors || []).some(e => e.field === 'school'),
+    `status=${noSchool.status} ${JSON.stringify(noSchool.json?.data?.errors || []).slice(0, 200)}`)
+
   // ---------- 8. 导出权限 ----------
   console.log('\n[7] 导出授权')
   // 先复位成默认配置，避免上一次运行中断留下的空授权干扰断言
@@ -205,19 +241,28 @@ async function main() {
 
   // ---------- 9. 清理 ----------
   console.log('\n[8] 清理')
-  for (const id of ['310101201101055011', '310101201101055022', '310101201101055033']) {
+  const CLEAN_IDS = [
+    '310101201101055011', '310101201101055022', '310101201101055033',
+    '310101201101066051', '310101201101066062', '310101201101066073',
+  ]
+  for (const id of CLEAN_IDS) {
     const n = await call(`/data/page/grade_nine?keyword=${id}`, { token: admin })
     for (const r of (n.json?.data?.list || [])) await call(`/data/grade_nine/${r.id}`, { method: 'DELETE', token: admin })
     const a = await call(`/data/page/admission?keyword=${id}`, { token: admin })
     for (const r of (a.json?.data?.list || [])) await call(`/data/admission/${r.id}`, { method: 'DELETE', token: admin })
-    // 报名名单本身也要删，否则每跑一次就多留 3 条待审
+    // 报名名单本身也要删，否则每跑一次就多留几条待审
     const reg = await call(`/registrations?page=1&pageSize=100&keyword=${id}`, { token: admin })
     for (const r of (reg.json?.data?.list || [])) {
       await call(`/registrations/${r.id}`, { method: 'DELETE', token: admin })
     }
   }
-  const left = await call('/registrations?page=1&pageSize=100&keyword=3101012011010550', { token: admin })
-  check('测试报名名单已清理干净', (left.json?.data?.list || []).length === 0, `剩余 ${(left.json?.data?.list || []).length} 条`)
+  // 逐个身份ID核对，避免用前缀匹配时误伤演示数据（陈一/陈二/陈三）
+  let leftCount = 0
+  for (const id of CLEAN_IDS) {
+    const l = await call(`/registrations?page=1&pageSize=100&keyword=${id}`, { token: admin })
+    leftCount += (l.json?.data?.list || []).filter(r => r.identityId === id).length
+  }
+  check('测试报名名单已清理干净', leftCount === 0, `剩余 ${leftCount} 条`)
   console.log('  （测试数据已清理）')
 
   console.log(`\n=== 结果：${pass} 通过 / ${fail} 失败 ===`)
