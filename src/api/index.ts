@@ -304,12 +304,14 @@ export const dataApi = {
 
 // ========== 学校上报 API（新增） ==========
 export const submissionApi = {
-  /** 预检：校验 + 差异对比，不写库 */
+  /** 预检：校验 + 差异对比，不写库
+   *  allowPartial=true（仅管理员）时，即使有校验错误也返回其余可导入行的差异 */
   preview: (data: {
     school?: string
     year: string
     gradeLevel: string
     rows: any[]
+    allowPartial?: boolean
   }) =>
     request('/submissions/preview', {
       method: 'POST',

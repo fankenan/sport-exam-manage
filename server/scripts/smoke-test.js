@@ -249,6 +249,31 @@ async function main() {
   check('预检能识别非法数据', preview.status === 200 && previewData?.valid === false && previewData.errorCount === 1,
     `errorCount=${previewData?.errorCount}`)
 
+  // ----- 管理员「跳过错误行、只导入正确数据」-----
+  const mixed = [
+    { name: '新增学生A', id_card: '310101200901019001', graduation_year: '2026', attendance_score: 90, exam_score: 88, fitness_score: 92, total: 270 },
+    { name: '非法身份证', id_card: '123', graduation_year: '2026', attendance_score: 90, exam_score: 88, fitness_score: 92, total: 270 },
+  ]
+  const partialPreview = await call('/submissions/preview', {
+    method: 'POST', token: adminToken,
+    body: { year: '2026', gradeLevel: 'seven', rows: mixed, allowPartial: true },
+  })
+  const pp = partialPreview.json?.data
+  check('管理员预检：有错误也返回可导入行',
+    partialPreview.status === 200 && pp?.valid === false && pp?.validCount === 1
+      && pp?.skippedCount === 1 && (pp?.newCount + pp?.updateCount) === 1
+      && JSON.stringify(pp?.validIndexes) === '[0]',
+    JSON.stringify(pp)?.slice(0, 240))
+
+  const schoolPartial = await call('/submissions/preview', {
+    method: 'POST', token: schoolToken,
+    body: { year: '2026', gradeLevel: 'seven', rows: mixed, allowPartial: true },
+  })
+  const sp = schoolPartial.json?.data
+  check('学校账号不能用「只导入正确数据」',
+    schoolPartial.status === 200 && sp?.valid === false && sp?.newCount === 0,
+    JSON.stringify(sp)?.slice(0, 200))
+
   const goodPreview = await call('/submissions/preview', {
     method: 'POST', token: schoolToken,
     body: {

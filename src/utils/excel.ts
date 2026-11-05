@@ -40,7 +40,7 @@ export function buildColMap(headers: string[]): Record<string, number> {
     if (s.includes('学校') && !s.includes('毕业')) map.school = i
     else if (s === '姓名' || s === '名字') map.name = i
     else if (s.includes('身份证') || s.includes('身份号码')) map.idCard = i
-    else if (s.includes('学籍号') || s.includes('报名序号') || s.includes('报名号')) map.studentNumber = i
+    else if (s.includes('学籍号') || s === '学号' || s.includes('报名序号') || s.includes('报名号')) map.studentNumber = i
     else if (s.includes('毕业')) map.graduationYear = i
     else if (s.includes('年级')) map.grade = i
     else if (s.includes('出勤')) map.attendanceScore = i

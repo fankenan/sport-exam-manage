@@ -190,6 +190,14 @@
           <el-button type="danger" plain @click="exportErrors">导出错误清单</el-button>
           <span class="tip-text">导出后可对照修正，再重新上传</span>
         </div>
+        <el-alert
+          v-if="canPartialImport"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="partial-alert"
+          :title="`以上 ${previewResult.errorCount} 处问题涉及 ${blockedRows.size} 行，这些行不会被导入。其余 ${importableCount} 条数据是正常的，可以先导入，剩下的改完再传一次。`"
+        />
       </template>
 
       <!-- 九年级成绩：逐条预览 -->
@@ -256,8 +264,8 @@
       </template>
 
       <!-- 提交栏（三种模式共用） -->
-      <div v-if="previewResult.valid" class="submit-row">
-        <template v-if="!authStore.isSchoolUser && !isRegistrationMode && previewResult.updateCount > 0">
+      <div v-if="previewResult.valid || canPartialImport" class="submit-row">
+        <template v-if="previewResult.valid && !authStore.isSchoolUser && !isRegistrationMode && previewResult.updateCount > 0">
           <el-radio-group v-model="importMode" size="default">
             <el-radio value="all">导入全部（新增 + 更新 {{ previewResult.updateCount }} 条）</el-radio>
             <el-radio value="onlyNew">仅导入新增，更新项暂存到「待处理」</el-radio>
@@ -267,7 +275,7 @@
           type="primary"
           size="large"
           :loading="submitting"
-          :disabled="isRegistrationMode ? previewResult.totalRows === 0 : previewResult.newCount + previewResult.updateCount === 0"
+          :disabled="isRegistrationMode ? previewResult.totalRows === 0 : importableCount === 0"
           @click="doSubmit"
         >
           {{ submitButtonText }}
@@ -429,6 +437,25 @@ const parsedRows = ref<any[]>([])
 /** 九年级成绩预检通过后的逐条清单（服务端匹配结果） */
 const nineScorePreview = ref<any[]>([])
 
+/** 校验没通过的行：管理员可以跳过它们，只导入其余正确的数据 */
+const blockedRows = ref<Set<any>>(new Set())
+
+/** 可导入条数（出错的行已经排除在外） */
+const importableCount = computed(() => {
+  const p = previewResult.value
+  return p ? p.newCount + p.updateCount : 0
+})
+
+/** 有校验错误、但仍有可导入的行 → 允许「仅导入正确数据」 */
+const canPartialImport = computed(() =>
+  !isSchool.value
+  && !isNineScoreMode.value
+  && !isRegistrationMode.value
+  && !!previewResult.value
+  && !previewResult.value.valid
+  && importableCount.value > 0,
+)
+
 const isSchool = computed(() => authStore.isSchoolUser)
 const formatTime = (t?: string) => formatDateTime(t)
 
@@ -445,6 +472,7 @@ const isNineScoreMode = computed(() => !isSchool.value && adminMode.value === 's
 const submitButtonText = computed(() => {
   if (isRegistrationMode.value) return '提交报名信息'
   if (isNineScoreMode.value) return '确认导入成绩'
+  if (canPartialImport.value) return `仅导入正确数据（${importableCount.value} 条）`
   return isSchool.value ? '提交上报' : '确认导入'
 })
 
@@ -494,6 +522,7 @@ const handleFileChange = async (file: any) => {
   previewResult.value = null
   parsedRows.value = []
   nineScorePreview.value = []
+  blockedRows.value = new Set()
 }
 
 const clearFile = () => {
@@ -501,6 +530,7 @@ const clearFile = () => {
   previewResult.value = null
   parsedRows.value = []
   nineScorePreview.value = []
+  blockedRows.value = new Set()
 }
 
 const clearAll = () => {
@@ -531,25 +561,25 @@ const parseFile = async (file: File) => {
 
   parsed.rows.forEach((row: any[], index: number) => {
     if (!row) return
-    const school = cellVal(row, parsed.colMap, 'school', 0)
+    // 没有「学校」「年级」列时不要按列号硬猜 —— 猜错会把姓名当学校、
+    // 把出勤率成绩（"90"）当年级（含 9 → 九年级）。缺列就留空，交给下面的逻辑兜底。
+    const schoolRaw = parsed.colMap.school !== undefined ? cellVal(row, parsed.colMap, 'school', -1) : ''
     const name = cellVal(row, parsed.colMap, 'name', 1)
-    if (!school && !name) return
+    if (!schoolRaw && !name) return
 
     const idCard = readIdCard(row, index, parsed.colMap, parsed.sheet, xlsx)
-    const rowGrade = normalizeGradeValue(
-      cellVal(row, parsed.colMap, 'grade', 4),
-      parsed.detectedGrade,
-    )
+    const gradeRaw = parsed.colMap.grade !== undefined ? cellVal(row, parsed.colMap, 'grade', -1) : ''
+    const rowGrade = normalizeGradeValue(gradeRaw, parsed.detectedGrade)
     const graduationYear = cellVal(row, parsed.colMap, 'graduationYear', 3)
       || (isSchool.value ? form.year : '')
 
     const item: any = {
-      school: school || (isSchool.value ? authStore.userSchoolName : ''),
+      school: schoolRaw || (isSchool.value ? authStore.userSchoolName : ''),
       name,
       idCard,
       identityId: normalizeIdCard(idCard),
       graduationYear,
-      grade: cellVal(row, parsed.colMap, 'grade', 4),
+      grade: gradeRaw,
       remark: cellVal(row, parsed.colMap, 'remark', parsed.formatType === 'nine' ? 10 : 9),
       rowGrade,
     }
@@ -609,6 +639,15 @@ const runPreview = async () => {
       return
     }
     fillMissingYears(rows)
+
+    // 管理员导入七/八年级时，学校必须来自文件；缺列会写成空学校
+    if (!isSchool.value && !isRegistrationMode.value && !isNineScoreMode.value) {
+      const noSchool = rows.filter(r => !r.school).length
+      if (noSchool > 0) {
+        ElMessage.error(`有 ${noSchool} 行缺少「学校」列，管理员导入时每行都必须填学校名称`)
+        return
+      }
+    }
 
     // ---- 模式一：学校上传九年级报名信息 ----
     if (isRegistrationMode.value) {
@@ -697,21 +736,38 @@ const runPreview = async () => {
       newRows: [], updateRows: [], sameRows: [],
     }
 
+    // 管理员可以跳过出错的行、只导入正确的数据；学校必须整批改对
+    const allowPartial = !isSchool.value
+    const blocked = new Set<any>()
+
     for (const g of groups.values()) {
       const res = await submissionApi.preview({
         year: g.year,
         gradeLevel: g.level,
         rows: g.rows.map(stripInternal),
+        allowPartial,
       })
       if (!res.valid) {
         merged.valid = false
         merged.errors.push(...(res.errors || []))
         merged.errorCount += res.errorCount || 0
-        continue
+
+        if (!allowPartial) continue
+        // 标记出错的行（服务端给的是 0 基下标），导入时整行跳过。
+        // 拿不到下标清单时按「整组都不可导入」处理，宁可不导入也不写坏数据。
+        const idxs: number[] | null = Array.isArray(res.validIndexes) ? res.validIndexes : null
+        if (idxs) {
+          g.rows.forEach((row, i) => { if (!idxs.includes(i)) blocked.add(row) })
+        } else {
+          g.rows.forEach(row => blocked.add(row))
+          merged.newCount = 0
+          merged.updateCount = 0
+        }
       }
-      merged.newCount += res.newCount
-      merged.updateCount += res.updateCount
-      merged.sameCount += res.sameCount
+      // 有错误时，服务端返回的计数已经只统计「通过校验的行」
+      merged.newCount += res.newCount || 0
+      merged.updateCount += res.updateCount || 0
+      merged.sameCount += res.sameCount || 0
       // 「合计不符」的判定规则在服务端，前端只展示结果
       merged.mismatchCount += res.mismatchCount || 0
       merged.newRows.push(...(res.newRows || []))
@@ -719,6 +775,7 @@ const runPreview = async () => {
       merged.sameRows.push(...(res.sameRows || []))
     }
 
+    blockedRows.value = blocked
     parsedRows.value = rows
     previewResult.value = merged
     diffTab.value = 'new'
@@ -728,6 +785,10 @@ const runPreview = async () => {
       ElMessage.success(
         `校验通过：新增 ${merged.newCount} 条，更新 ${merged.updateCount} 条，无变化 ${merged.sameCount} 条`
         + (mismatchCount.value > 0 ? `，其中 ${mismatchCount.value} 条合计不符` : ''),
+      )
+    } else if (importableCount.value > 0) {
+      ElMessage.warning(
+        `发现 ${merged.errorCount} 处问题（${blocked.size} 行），其余 ${importableCount.value} 条可先导入`,
       )
     } else {
       ElMessage.error(`校验未通过，共 ${merged.errorCount} 处问题`)
@@ -764,24 +825,31 @@ const toScoreRow = (r: any) => ({
 })
 
 const doSubmit = async () => {
-  if (!previewResult.value?.valid) return
-  const preview = previewResult.value
+  // 校验全通过 → 正常导入；有错误但管理员选择「只导入正确数据」→ 也放行
+  const p = previewResult.value
+  if (!p) return
+  if (!p.valid && !canPartialImport.value) return
+  const preview = p
 
   // 管理员：直接写正式表；学校：提交审核
+  const partial = canPartialImport.value
   const actionText = isRegistrationMode.value
     ? '提交报名信息'
-    : (isNineScoreMode.value ? '确认导入成绩' : (isSchool.value ? '提交上报' : '确认导入'))
+    : (isNineScoreMode.value
+        ? '确认导入成绩'
+        : (isSchool.value ? '提交上报' : (partial ? '仅导入正确数据' : '确认导入')))
   const onlyNew = !isSchool.value && importMode.value === 'onlyNew'
   const willWrite = onlyNew ? preview.newCount : preview.newCount + preview.updateCount
+  const skipText = partial ? `，跳过 ${blockedRows.value.size} 行有问题的数据和 ${preview.errorCount} 处错误` : ''
   const extra = isRegistrationMode.value
     ? '提交后将进入教育局审核，审核通过名单并导入成绩后，才会计入正式成绩表。'
     : (isSchool.value
         ? '提交后将进入管理员审核队列，审核通过才会计入正式成绩表。'
         : (onlyNew
-            ? `将只导入 ${preview.newCount} 条新增记录，${preview.updateCount} 条更新项会暂存到「待处理」。`
+            ? `将只导入 ${preview.newCount} 条新增记录，${preview.updateCount} 条更新项会暂存到「待处理」${skipText}。`
             : (preview.updateCount > 0
-                ? `其中 ${preview.updateCount} 条会覆盖系统中已有的记录，确定继续吗？`
-                : '导入后将立即生效。')))
+                ? `其中 ${preview.updateCount} 条会覆盖系统中已有的记录${skipText}，确定继续吗？`
+                : `导入后将立即生效${skipText}。`)))
 
   try {
     await ElMessageBox.confirm(
@@ -864,9 +932,12 @@ const doSubmit = async () => {
     byLevel.get(r.rowGrade)!.push(r)
   }
   const parts: string[] = []
+  let skippedRows = 0
   for (const [level, list] of byLevel) {
     const table = TABLE_BY_LEVEL[level]
     const changed = list.filter(r => {
+      // 校验没通过的行整行跳过（管理员「仅导入正确数据」）
+      if (blockedRows.value.has(r)) { skippedRows++; return false }
       const key = `${r.identityId}||${r.school || ''}`
       if (sameKeys.has(key)) return false
       if (importMode.value === 'onlyNew' && updateKeys.has(key)) return false
@@ -876,7 +947,10 @@ const doSubmit = async () => {
     await dataApi.import(table, changed.map(stripInternal))
     parts.push(`${GRADE_LABELS[level]} ${changed.length} 条`)
   }
-  ElMessage.success(`导入成功：${parts.join('；') || '没有需要写入的记录'}`)
+  ElMessage.success(
+    `导入成功：${parts.join('；') || '没有需要写入的记录'}`
+    + (skippedRows > 0 ? `（已跳过 ${skippedRows} 行有问题的数据）` : ''),
+  )
 
       setTimeout(() => {
         const seven = byLevel.get('seven')?.length || 0
@@ -1101,6 +1175,10 @@ onMounted(async () => {
     align-items: center;
     gap: 12px;
     margin-top: 16px;
+  }
+
+  .partial-alert {
+    margin-top: 12px;
   }
 
   .submit-row {

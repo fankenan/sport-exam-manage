@@ -302,7 +302,11 @@ router.post('/preview', authMiddleware, async (req, res) => {
     })
 
     const errors = validateRows(normalized, gradeLevel, school, year, isSchoolUser)
-    if (errors.length > 0) {
+
+    // 管理员可以「跳过错误行、只导入正确数据」；学校账号必须整批改对再提交
+    const allowPartial = Boolean(req.body.allowPartial) && !isSchoolUser
+
+    if (errors.length > 0 && !allowPartial) {
       return ok(res, {
         valid: false,
         errors: errors.slice(0, 500),
@@ -314,22 +318,35 @@ router.post('/preview', authMiddleware, async (req, res) => {
       }, `校验未通过，共 ${errors.length} 处问题`)
     }
 
+    // 出错的行整行跳过（同一行可能有多处错误，用 Set 去重）
+    const badIndexes = new Set(errors.map(e => e.row - 2))
+    const validIndexes = normalized.map((_, i) => i).filter(i => !badIndexes.has(i))
+    const goodRows = validIndexes.map(i => normalized[i])
+
     const table = GRADE_LEVELS[gradeLevel].table
-    const diff = await buildDiff(pool, table, normalized, school, year)
+    const diff = goodRows.length
+      ? await buildDiff(pool, table, goodRows, school, year)
+      : { newRows: [], updateRows: [], sameRows: [] }
 
     ok(res, {
-      valid: true,
-      errors: [],
-      errorCount: 0,
+      valid: errors.length === 0,
+      errors: errors.slice(0, 500),
+      errorCount: errors.length,
       totalRows: rows.length,
+      /** 通过校验、可以导入的行在原数组里的下标（0 基） */
+      validIndexes,
+      validCount: validIndexes.length,
+      skippedCount: rows.length - validIndexes.length,
       newCount: diff.newRows.length,
       updateCount: diff.updateRows.length,
       sameCount: diff.sameRows.length,
-      mismatchCount: countMismatches(normalized, gradeLevel),
+      mismatchCount: countMismatches(goodRows, gradeLevel),
       newRows: diff.newRows.slice(0, 200),
       updateRows: diff.updateRows.slice(0, 200),
       sameRows: diff.sameRows.slice(0, 200),
-    }, '预检完成')
+    }, errors.length > 0
+      ? `校验发现 ${errors.length} 处问题，可先导入其余 ${validIndexes.length} 条`
+      : '预检完成')
   } catch (err) {
     console.error('[上报预检错误]', err)
     fail(res, '预检失败：' + err.message)
