@@ -2,13 +2,13 @@
   <div class="dashboard-page">
     <!-- 顶部工具栏 -->
     <div class="dashboard-toolbar">
-      <div class="toolbar-actions">
+      <div class="toolbar-left">
         <el-select
           v-model="selectedYear"
           placeholder="请选择毕业年份"
           clearable
-          style="width: 180px"
-          @change="handleYearChange"
+          class="w-year"
+          @change="handleFilterChange"
         >
           <el-option v-for="y in yearOptions" :key="y" :label="y + '届'" :value="y" />
         </el-select>
@@ -18,19 +18,21 @@
           placeholder="选择学校（可选）"
           clearable
           filterable
-          style="width: 200px; margin-left: 12px"
-          @change="handleSchoolChange"
+          class="w-school"
+          @change="handleFilterChange"
         >
           <el-option v-for="s in schoolOptions" :key="s" :label="s" :value="s" />
         </el-select>
-        <el-tag v-if="authStore.isSchoolUser" type="primary" style="margin-left: 12px">
+        <el-tag v-if="authStore.isSchoolUser" type="primary" effect="light">
           {{ authStore.userSchoolName }}
         </el-tag>
-        <el-button type="primary" style="margin-left: 12px" @click="openConfig">
+      </div>
+      <div class="toolbar-right">
+        <el-button type="primary" plain @click="openConfig">
           <el-icon><Setting /></el-icon>
           配置组件
         </el-button>
-        <el-button type="default" @click="refreshData">
+        <el-button @click="refreshData">
           <el-icon><Refresh /></el-icon>
           刷新
         </el-button>
@@ -39,19 +41,21 @@
 
     <!-- 未选择年份时提示 -->
     <div v-if="!selectedYear" class="empty-state">
-      <el-empty description="请先选择毕业年份，然后查看数据统计" :image-size="120" />
+      <el-empty description="请先选择毕业年份，然后查看数据统计" :image-size="140">
+        <el-button type="primary" @click="loadAll">加载数据</el-button>
+      </el-empty>
     </div>
 
     <!-- 看板内容 -->
     <div v-else v-loading="loading" class="dashboard-grid">
-      <!-- 统计卡片（始终显示） -->
+      <!-- 统计卡片 -->
       <div class="grid-full">
         <StatsCards
-          :grade-seven-count="filteredSeven.length"
-          :grade-eight-count="filteredEight.length"
-          :grade-nine-count="filteredNine.length"
-          :admission-count="filteredAdmission.length"
-          :school-count="schoolSet.size"
+          :grade-seven-count="stats.counts.gradeSeven"
+          :grade-eight-count="stats.counts.gradeEight"
+          :grade-nine-count="stats.counts.gradeNine"
+          :admission-count="stats.counts.admission"
+          :school-count="stats.counts.schoolCount"
         />
       </div>
 
@@ -59,17 +63,34 @@
       <template v-for="widget in visibleWidgets" :key="widget.key">
         <div v-if="widgets[widget.key]" :class="widget.wide ? 'grid-full' : 'grid-half'">
           <WidgetContainer :title="widget.label">
-            <GradePieChart v-if="widget.key === 'gradePie'"
-              :seven="filteredSeven.length" :eight="filteredEight.length" :nine="filteredNine.length" />
-            <SchoolBarChart v-if="widget.key === 'schoolBar'"
-              :schools="schoolBarData.schools" :averages="schoolBarData.averages" />
-            <ScoreDistribution v-if="widget.key === 'scoreDist'"
-              :scores="allAdmissionScores" />
-            <AdmissionRadar v-if="widget.key === 'admissionRadar'"
-              :long-run="admAvg.longRun" :rope-skipping="admAvg.ropeSkipping"
-              :long-jump="admAvg.longJump" :ball-sports="admAvg.ballSports" :martial-arts="admAvg.martialArts" />
-            <VerifyPieChart v-if="widget.key === 'verifyPie'"
-              :passed="verifyStats.passed" :failed="verifyStats.failed" />
+            <GradePieChart
+              v-if="widget.key === 'gradePie'"
+              :seven="stats.counts.gradeSeven"
+              :eight="stats.counts.gradeEight"
+              :nine="stats.counts.gradeNine"
+            />
+            <SchoolBarChart
+              v-if="widget.key === 'schoolBar'"
+              :schools="stats.schoolBar.schools"
+              :averages="stats.schoolBar.averages"
+            />
+            <ScoreDistribution
+              v-if="widget.key === 'scoreDist'"
+              :bins="stats.scoreBins"
+            />
+            <AdmissionRadar
+              v-if="widget.key === 'admissionRadar'"
+              :long-run="stats.admissionAvg.longRun"
+              :rope-skipping="stats.admissionAvg.ropeSkipping"
+              :long-jump="stats.admissionAvg.longJump"
+              :ball-sports="stats.admissionAvg.ballSports"
+              :martial-arts="stats.admissionAvg.martialArts"
+            />
+            <VerifyPieChart
+              v-if="widget.key === 'verifyPie'"
+              :passed="stats.verify.passed"
+              :failed="stats.verify.failed"
+            />
             <RecentImports v-if="widget.key === 'recentImports'" />
             <SchoolStats v-if="widget.key === 'schoolStats'" :stats="schoolStats" />
           </WidgetContainer>
@@ -78,7 +99,7 @@
     </div>
 
     <!-- 配置组件弹窗 -->
-    <el-dialog v-model="configVisible" title="配置显示组件" width="480px">
+    <el-dialog v-model="configVisible" title="配置显示组件" width="460px">
       <el-checkbox-group v-model="enabledWidgets" class="config-list">
         <el-checkbox v-for="w in visibleWidgets" :key="w.key" :label="w.key" :value="w.key">
           {{ w.label }}
@@ -93,8 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { Setting, Refresh } from '@element-plus/icons-vue'
 import { dataApi } from '@/api'
 import { useAuthStore } from '@/stores/auth'
@@ -123,7 +143,6 @@ const widgetList: WidgetDef[] = [
 const defaultWidgets: Record<string, boolean> = {}
 widgetList.forEach(w => { defaultWidgets[w.key] = true })
 
-// 从 localStorage 恢复
 function loadWidgetConfig(): Record<string, boolean> {
   try {
     const saved = localStorage.getItem('dashboard_widgets')
@@ -149,106 +168,78 @@ const saveConfig = () => {
 
 // ========== 数据 ==========
 const authStore = useAuthStore()
-// 学校用户隐藏最近操作记录
+
+// 学校用户隐藏管理员专属组件
 const visibleWidgets = computed(() => {
   if (authStore.isSchoolUser) {
     return widgetList.filter(w => w.key !== 'recentImports' && w.key !== 'schoolStats')
   }
   return widgetList
 })
+
 const selectedYear = ref('')
 const selectedSchool = ref(authStore.isSchoolUser ? authStore.userSchoolName : '')
 const yearOptions = ref<string[]>([])
 const schoolOptions = ref<string[]>([])
 const loading = ref(false)
-
-const allSeven = ref<any[]>([])
-const allEight = ref<any[]>([])
-const allNine = ref<any[]>([])
-const allAdmission = ref<any[]>([])
 const schoolStats = ref<Array<{ school: string; total: number; anomalyCount: number }>>([])
 
-// 筛选后的数据
-const filteredSeven = computed(() => filterData(allSeven.value))
-const filteredEight = computed(() => filterData(allEight.value))
-const filteredNine = computed(() => filterData(allNine.value))
-const filteredAdmission = computed(() => filterData(allAdmission.value))
-
-function filterData(list: any[]) {
-  return list.filter(item => {
-    if (selectedYear.value && item.graduationYear !== selectedYear.value) return false
-    if (selectedSchool.value && item.school !== selectedSchool.value) return false
-    return true
-  })
-}
-
-const schoolSet = computed(() => {
-  const set = new Set<string>()
-  filteredSeven.value.forEach((i: any) => set.add(i.school))
-  filteredEight.value.forEach((i: any) => set.add(i.school))
-  filteredNine.value.forEach((i: any) => set.add(i.school))
-  return set
+/**
+ * 看板数据全部由服务端聚合返回
+ * （旧实现是「拉全量数据 → 在浏览器里 filter/sort」，数据量大时极慢）
+ */
+const stats = reactive({
+  counts: { gradeSeven: 0, gradeEight: 0, gradeNine: 0, admission: 0, schoolCount: 0 },
+  verify: { passed: 0, failed: 0 },
+  admissionAvg: { longRun: 0, ropeSkipping: 0, longJump: 0, ballSports: 0, martialArts: 0 },
+  schoolBar: { schools: [] as string[], averages: [] as number[] },
+  scoreBins: [] as Array<{ label: string; count: number }>,
 })
 
-// 学校柱状图数据 - 中招体育考试成绩
-const schoolBarData = computed(() => {
-  const map = new Map<string, { total: number; count: number }>()
-  filteredAdmission.value.forEach((item: any) => {
-    if (!item.school) return
-    let entry = map.get(item.school) || { total: 0, count: 0 }
-    entry.total += Number(item.totalScore || 0)
-    entry.count++
-    map.set(item.school, entry)
-  })
-  const schools: string[] = []
-  const averages: number[] = []
-  map.forEach((v, k) => {
-    if (v.count > 0) { schools.push(k); averages.push(Math.round(v.total / v.count * 10) / 10) }
-  })
-  const paired = schools.map((s, i) => ({ s, a: averages[i] })).sort((x, y) => y.a - x.a)
-  return { schools: paired.map(p => p.s), averages: paired.map(p => p.a) }
-})
-
-// 中招成绩列表（用于分布直方图）
-const allAdmissionScores = computed(() => {
-  const scores: number[] = []
-  filteredAdmission.value.forEach((i: any) => scores.push(Number(i.totalScore || 0)))
-  return scores
-})
-
-// 校对统计
-const verifyStats = computed(() => {
-  let passed = 0, failed = 0
-  const check = (list: any[]) => list.forEach((i: any) => { i.verifyResult ? passed++ : failed++ })
-  check(filteredSeven.value)
-  check(filteredEight.value)
-  return { passed, failed }
-})
-
-// 中招平均分
-const admAvg = computed(() => {
-  const list = filteredAdmission.value
-  if (list.length === 0) return { longRun: 0, ropeSkipping: 0, longJump: 0, ballSports: 0, martialArts: 0 }
-  const avg = (field: string) => Math.round(list.reduce((s: number, i: any) => s + Number(i[field] || 0), 0) / list.length * 10) / 10
-  return { longRun: avg('longRun'), ropeSkipping: avg('ropeSkipping'), longJump: avg('longJump'), ballSports: avg('ballSports'), martialArts: avg('martialArts') }
-})
-
-// ========== 数据加载 ==========
 const loadYears = async () => {
-  try { yearOptions.value = await dataApi.getYears() } catch { /* ignore */ }
+  try {
+    yearOptions.value = await dataApi.getYears()
+  } catch (err: any) {
+    ElMessage.error('加载年份失败：' + (err.message || ''))
+  }
 }
+
 const loadSchools = async () => {
-  try { schoolOptions.value = await dataApi.getSchools(selectedYear.value || undefined) } catch { /* ignore */ }
-  schoolOptions.value = [...new Set(schoolOptions.value)].sort()
+  try {
+    schoolOptions.value = await dataApi.getSchools(selectedYear.value || undefined)
+  } catch (err: any) {
+    ElMessage.error('加载学校列表失败：' + (err.message || ''))
+  }
 }
-const loadAllData = async () => {
+
+const loadStats = async () => {
+  const res = await dataApi.statsOverview({
+    year: selectedYear.value || undefined,
+    school: selectedSchool.value || undefined,
+  })
+  Object.assign(stats.counts, res.counts)
+  Object.assign(stats.verify, res.verify)
+  Object.assign(stats.admissionAvg, res.admissionAvg)
+  stats.schoolBar = res.schoolBar
+  stats.scoreBins = res.scoreBins
+}
+
+const loadSchoolStats = async () => {
+  if (!authStore.isSchoolUser && selectedYear.value) {
+    try {
+      schoolStats.value = await dataApi.getSchoolStats(selectedYear.value)
+    } catch {
+      schoolStats.value = []
+    }
+  } else {
+    schoolStats.value = []
+  }
+}
+
+const loadAll = async () => {
   loading.value = true
   try {
-    const data = await dataApi.sync()
-    allSeven.value = data.gradeSevenList || []
-    allEight.value = data.gradeEightList || []
-    allNine.value = data.gradeNineList || []
-    allAdmission.value = data.admissionList || []
+    await Promise.all([loadStats(), loadSchoolStats()])
   } catch (err: any) {
     ElMessage.error('加载数据失败：' + (err.message || ''))
   } finally {
@@ -256,57 +247,54 @@ const loadAllData = async () => {
   }
 }
 
-const loadSchoolStats = async () => {
-  if (!authStore.isSchoolUser && selectedYear.value) {
-    try {
-      schoolStats.value = await dataApi.getSchoolStats(selectedYear.value)
-    } catch { schoolStats.value = [] }
-  } else {
-    schoolStats.value = []
-  }
+const handleFilterChange = () => {
+  if (!selectedYear.value) return
+  loadAll()
 }
 
-const handleYearChange = () => {
-  selectedSchool.value = ''
-  loadSchools()
-  loadSchoolStats()
+const refreshData = async () => {
+  await Promise.all([loadYears(), loadSchools()])
+  await loadAll()
 }
-const handleSchoolChange = () => { /* computed 自动更新 */ }
-const refreshData = () => loadAllData()
 
 onMounted(async () => {
   await loadYears()
-  await loadAllData()
+  await loadSchools()
+  // 默认选中最近一年，直接给出可用的看板
+  if (yearOptions.value.length > 0) selectedYear.value = yearOptions.value[0]
+  if (selectedYear.value) await loadAll()
 })
 </script>
 
 <style scoped lang="scss">
 .dashboard-page {
-  padding: 0;
-  min-height: 100%;
+  @include page-container;
 }
 
 .dashboard-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 0;
-  flex-wrap: wrap;
-  gap: 8px;
+  @include toolbar;
 
-  .toolbar-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }
-  .toolbar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+  .toolbar-left,
+  .toolbar-right {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .w-year { width: 170px; }
+  .w-school { width: 210px; }
 }
 
 .empty-state {
-  padding: 80px 0;
+  padding: 72px 0;
   text-align: center;
 }
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: $page-gap;
 }
 
 .grid-full { grid-column: 1 / -1; }
@@ -319,8 +307,8 @@ onMounted(async () => {
   :deep(.el-checkbox) { margin-right: 0; font-size: 14px; }
 }
 
-@media (max-width: 900px) {
-  .dashboard-grid { grid-template-columns: 1fr; }
+@media (max-width: 1024px) {
+  .dashboard-grid { grid-template-columns: minmax(0, 1fr); }
   .grid-half { grid-column: 1 / -1; }
 }
 </style>

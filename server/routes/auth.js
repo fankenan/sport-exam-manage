@@ -11,12 +11,13 @@ const { getPool } = require('../db')
 
 const router = express.Router()
 const JWT_SECRET = process.env.JWT_SECRET
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d'
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '2h'
 
+// 登录限流：按 IP + 用户名两个维度，避免攻击者用同一 IP 暴力不同账号
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
-  message: { code: 429, message: '登录尝试过于频繁，请15分钟后再试' },
+  message: { code: 429, message: '登录尝试过于频繁，请 15 分钟后再试' },
   standardHeaders: true,
   legacyHeaders: false,
 })
@@ -30,31 +31,40 @@ router.post('/login', loginLimiter, async (req, res) => {
     if (!cleanUsername || !password) return fail(res, '用户名和密码不能为空', 400)
 
     const [users] = await pool.query(
-      'SELECT a.*, s.name AS school_name FROM admins a LEFT JOIN schools s ON a.school_id = s.id WHERE a.username = ?',
-      [cleanUsername]
+      'SELECT a.id, a.username, a.password, a.role, a.school_id, a.status, a.token_version, s.name AS school_name ' +
+      'FROM admins a LEFT JOIN schools s ON a.school_id = s.id WHERE a.username = ?',
+      [cleanUsername],
     )
-    if (users.length === 0) return fail(res, '用户名或密码错误', 400)
+    // 用户不存在与密码错误返回同一提示，避免账号枚举
+    if (users.length === 0) {
+      await bcrypt.compare(password, '$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidinv')
+      return fail(res, '用户名或密码错误', 400)
+    }
 
     const user = users[0]
-    const valid = bcrypt.compareSync(password, user.password)
+    const valid = await bcrypt.compare(password, user.password)
     if (!valid) return fail(res, '用户名或密码错误', 400)
 
-    // 学校账号停用检查
-    if (user.school_id && user.status === 0) {
+    // 账号停用检查（管理员账号同样适用）
+    if (user.status === 0) {
       return fail(res, '该账号已被管理员停用', 403)
     }
 
+    const tokenVersion = Number(user.token_version || 0)
     const token = jwt.sign(
       {
         id: user.id,
         username: user.username,
         role: user.role,
         schoolId: user.school_id || null,
-        schoolName: user.school_name || null
+        schoolName: user.school_name || null,
+        tokenVersion,
       },
       JWT_SECRET,
-      { expiresIn: JWT_EXPIRES_IN }
+      { expiresIn: JWT_EXPIRES_IN },
     )
+
+    await pool.query('UPDATE admins SET last_login_at = NOW() WHERE id = ?', [user.id])
 
     ok(res, {
       token,
@@ -64,8 +74,8 @@ router.post('/login', loginLimiter, async (req, res) => {
         role: user.role,
         schoolId: user.school_id || null,
         schoolName: user.school_name || null,
-        createdAt: user.created_at
-      }
+        createdAt: user.created_at,
+      },
     })
   } catch (err) {
     console.error('[登录错误]', err)
@@ -73,23 +83,28 @@ router.post('/login', loginLimiter, async (req, res) => {
   }
 })
 
-// 修改密码
+// 修改密码（改完立即吊销所有旧令牌）
 router.put('/password', authMiddleware, async (req, res) => {
   try {
     const pool = getPool()
     const { oldPassword, newPassword } = req.body
     if (!oldPassword || !newPassword) return fail(res, '请填写原密码和新密码', 400)
-    if (newPassword.length < 6) return fail(res, '新密码长度不能少于6位', 400)
+    if (String(newPassword).length < 8) return fail(res, '新密码长度不能少于 8 位', 400)
+    if (oldPassword === newPassword) return fail(res, '新密码不能与原密码相同', 400)
 
     const [users] = await pool.query('SELECT password FROM admins WHERE id = ?', [req.user.id])
     if (users.length === 0) return fail(res, '用户不存在', 404)
 
-    const valid = bcrypt.compareSync(oldPassword, users[0].password)
+    const valid = await bcrypt.compare(oldPassword, users[0].password)
     if (!valid) return fail(res, '原密码错误', 400)
 
-    const hash = bcrypt.hashSync(newPassword, 10)
-    await pool.query('UPDATE admins SET password = ? WHERE id = ?', [hash, req.user.id])
-    ok(res, {}, '密码修改成功')
+    const hash = await bcrypt.hash(String(newPassword), 10)
+    // token_version +1 → 所有已签发的旧令牌立即失效
+    await pool.query(
+      'UPDATE admins SET password = ?, token_version = token_version + 1 WHERE id = ?',
+      [hash, req.user.id],
+    )
+    ok(res, { requireRelogin: true }, '密码修改成功，请重新登录')
   } catch (err) {
     console.error('[修改密码错误]', err)
     fail(res, '修改密码失败')
@@ -101,8 +116,9 @@ router.get('/verify', authMiddleware, async (req, res) => {
   try {
     const pool = getPool()
     const [users] = await pool.query(
-      'SELECT a.id, a.username, a.role, a.school_id, a.created_at, s.name AS school_name FROM admins a LEFT JOIN schools s ON a.school_id = s.id WHERE a.id = ?',
-      [req.user.id]
+      'SELECT a.id, a.username, a.role, a.school_id, a.created_at, s.name AS school_name ' +
+      'FROM admins a LEFT JOIN schools s ON a.school_id = s.id WHERE a.id = ?',
+      [req.user.id],
     )
     if (users.length === 0) return fail(res, '用户不存在', 404)
     const u = users[0]
@@ -112,7 +128,7 @@ router.get('/verify', authMiddleware, async (req, res) => {
       role: u.role,
       schoolId: u.school_id || null,
       schoolName: u.school_name || null,
-      createdAt: u.created_at
+      createdAt: u.created_at,
     })
   } catch (err) {
     console.error('[验证错误]', err)

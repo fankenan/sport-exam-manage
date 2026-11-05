@@ -36,7 +36,7 @@
               v-model="form.username"
               placeholder="请输入用户名"
               size="large"
-              :prefix-icon="UserIcon"
+              :prefix-icon="User"
               autocomplete="username"
               @keyup.enter="handleLogin"
             />
@@ -51,7 +51,7 @@
               type="password"
               placeholder="请输入密码"
               size="large"
-              :prefix-icon="LockIcon"
+              :prefix-icon="Lock"
               show-password
               autocomplete="current-password"
               @keyup.enter="handleLogin"
@@ -88,10 +88,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, h } from 'vue'
+import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
+import { User, Lock } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
-import { ElMessage } from 'element-plus'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -101,41 +101,33 @@ const formRef = ref()
 
 const form = reactive({ username: '', password: '' })
 
-// SVG 图标组件
-const UserIcon = h('svg', {
-  width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', style: 'display:block'
-}, [
-  h('circle', { cx: 8, cy: 6, r:3, stroke: 'currentColor', 'stroke-width': 1.5 }),
-  h('path', { d: 'M2 14c0-3.314 2.686-6 6-6s6 2.686 6 6', stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round' })
-])
-const LockIcon = h('svg', {
-  width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', style: 'display:block'
-}, [
-  h('rect', { x: 2, y: 7, width: 12, height: 8, rx: 1.5, stroke: 'currentColor', 'stroke-width': 1.5 }),
-  h('path', { d: 'M5 7V5a3 3 0 016 0v2', stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round' })
-])
-
 const rules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
 
 const handleLogin = async () => {
-  if (!formRef.value) return
-  await formRef.value.validate().catch(() => {})
-  if (logging.value) return
+  if (!formRef.value || logging.value) return
 
+  // 先置为登录中，避免校验期间被重复点击触发多次请求
   logging.value = true
   errorMsg.value = ''
 
+  // 校验不通过时直接中止，避免带着空值发起登录请求
+  const valid = await formRef.value.validate().catch(() => false)
+  if (!valid) {
+    logging.value = false
+    return
+  }
+
   try {
-    const ok = await authStore.login(form.username, form.password)
-    if (ok) {
-      ElMessage.success('登录成功，欢迎回来！')
-      router.push('/grade-import')
-    }
+    // store 登录失败时会抛出异常，这里统一捕获并提示
+    await authStore.login(form.username, form.password)
+    ElMessage.success('登录成功，欢迎回来！')
+    router.push('/dashboard')
   } catch (e: any) {
-    errorMsg.value = e.message || '用户名或密码错误'
+    errorMsg.value = e?.message || '用户名或密码错误'
+    ElMessage.error(errorMsg.value)
   } finally {
     logging.value = false
   }
@@ -218,6 +210,12 @@ const handleLogin = async () => {
     0 24px 60px rgba(0, 0, 0, 0.7),
     0 0 80px rgba(0, 198, 255, 0.04);
   backdrop-filter: blur(20px);
+
+  // 登录中：卡片整体置灰并屏蔽交互
+  &.loading {
+    pointer-events: none;
+    opacity: 0.85;
+  }
 
   // 顶部渐变边框
   &::before {

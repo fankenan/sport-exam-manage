@@ -20,7 +20,8 @@ function auditMiddleware(options) {
     const originalJson = res.json.bind(res);
 
     res.json = function (body) {
-      if (body && body.code === 200) {
+      // 预检 / 试算这类不落库的请求用 _skipAudit 跳过审计
+      if (body && body.code === 200 && !(body.data && body.data._skipAudit)) {
         const table = typeof targetTable === 'function'
           ? targetTable(req)
           : targetTable;

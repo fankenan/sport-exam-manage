@@ -12,32 +12,42 @@ import { CanvasRenderer } from 'echarts/renderers'
 
 use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])
 
-interface Props { scores: number[] }
+interface Props {
+  /** 服务端算好的分箱直方图：[{ label: '0-10', count: 12 }, ...] */
+  bins: Array<{ label: string; count: number }>
+}
 const props = defineProps<Props>()
 
-const option = computed(() => {
-  const bins = ['0-10', '10-20', '20-30', '30-40', '40-50', '50-60', '60-70', '70-80', '80-90', '90-100']
-  const counts = new Array(10).fill(0)
-  props.scores.forEach(s => {
-    if (s >= 100) counts[9]++
-    else if (s < 0) return
-    else counts[Math.floor(s / 10)]++
-  })
-  return {
-    tooltip: { trigger: 'axis', formatter: (p: any) => `${p[0].name}分: ${p[0].value} 人` },
-    grid: { left: 40, right: 20, top: 10, bottom: 30 },
-    xAxis: { type: 'category', data: bins, axisLabel: { rotate: 45, fontSize: 11 } },
-    yAxis: { type: 'value', name: '人数' },
-    series: [{
-      type: 'bar',
-      data: counts,
-      itemStyle: {
-        borderRadius: [4, 4, 0, 0],
-        color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-          colorStops: [{ offset: 0, color: '#3b82f6' }, { offset: 1, color: '#93c5fd' }] }
+const option = computed(() => ({
+  tooltip: { trigger: 'axis' as const, formatter: (p: any) => `${p[0].name}分：${p[0].value} 人` },
+  grid: { left: 48, right: 20, top: 16, bottom: 36 },
+  xAxis: {
+    type: 'category' as const,
+    data: props.bins.map(b => b.label),
+    axisLabel: { rotate: 40, fontSize: 11 },
+    axisLine: { lineStyle: { color: 'var(--border)' } },
+  },
+  yAxis: {
+    type: 'value' as const,
+    name: '人数',
+    nameTextStyle: { color: 'var(--text-muted)', fontSize: 11 },
+    axisLabel: { fontSize: 11 },
+    splitLine: { lineStyle: { color: 'var(--border-light)' } },
+  },
+  series: [{
+    type: 'bar' as const,
+    data: props.bins.map(b => b.count),
+    barMaxWidth: 32,
+    itemStyle: {
+      borderRadius: [4, 4, 0, 0],
+      color: {
+        type: 'linear' as const, x: 0, y: 0, x2: 0, y2: 1,
+        colorStops: [
+          { offset: 0, color: 'var(--accent)' },
+          { offset: 1, color: 'var(--accent-light)' },
+        ],
       },
-      barMaxWidth: 32,
-    }]
-  }
-})
+    },
+  }],
+}))
 </script>

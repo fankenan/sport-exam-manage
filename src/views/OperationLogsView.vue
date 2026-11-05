@@ -8,12 +8,20 @@
       </template>
 
       <div class="filter-section">
-        <el-input
+        <el-select
           v-model="filterOperator"
           placeholder="操作人"
           clearable
+          filterable
           style="width: 150px"
-        />
+        >
+          <el-option
+            v-for="op in operatorOptions"
+            :key="op"
+            :label="op"
+            :value="op"
+          />
+        </el-select>
 
         <el-select
           v-model="filterOperationType"
@@ -72,9 +80,9 @@
           style="width: 100%"
           :header-cell-style="{ background: 'var(--bg-surface)', color: 'var(--text-muted)', fontWeight: 700, fontSize: '11px', letterSpacing: '0.08em', textTransform: 'uppercase' }"
         >
-          <el-table-column type="index" label="序号" width="60" align="center" />
-          <el-table-column prop="operator" label="操作人" width="120" align="center" />
-          <el-table-column label="操作类型" width="100" align="center">
+          <el-table-column type="index" label="序号" :width="60" :min-width="60" align="center" />
+          <el-table-column prop="operator" label="操作人" :width="120" :min-width="120" align="center" />
+          <el-table-column label="操作类型" :width="100" :min-width="100" align="center">
             <template #default="{ row }">
               <el-tag
                 :type="row.operation_type === 'create' ? 'success' : row.operation_type === 'update' ? 'warning' : 'danger'"
@@ -84,7 +92,7 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="目标表" width="130" align="center">
+          <el-table-column label="目标表" :width="130" :min-width="130" align="center">
             <template #default="{ row }">
               {{ tableLabel(row.target_table) }}
             </template>
@@ -94,8 +102,8 @@
               <span class="detail-text">{{ formatDetails(row.details) }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="ip_address" label="IP地址" width="140" align="center" />
-          <el-table-column prop="created_at" label="操作时间" width="170" align="center">
+          <el-table-column prop="ip_address" label="IP地址" :width="140" :min-width="140" align="center" />
+          <el-table-column prop="created_at" label="操作时间" :width="170" :min-width="170" align="center">
             <template #default="{ row }">
               {{ formatTime(row.created_at) }}
             </template>
@@ -121,7 +129,6 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { logApi } from '@/api'
 
@@ -135,20 +142,10 @@ const filterOperationType = ref('')
 const filterTargetTable = ref('')
 const dateRange = ref<[string, string] | null>(null)
 
-const operationTypeOptions = [
-  { label: '新增', value: 'create' },
-  { label: '修改', value: 'update' },
-  { label: '删除', value: 'delete' },
-]
-
-const targetTableOptions = [
-  { label: '七年级成绩', value: 'grade_seven' },
-  { label: '八年级成绩', value: 'grade_eight' },
-  { label: '九年级成绩', value: 'grade_nine' },
-  { label: '中招成绩', value: 'admission' },
-  { label: '管理员', value: 'admins' },
-  { label: '材料', value: 'materials' },
-]
+// 筛选项来自服务端（历史日志中出现过的操作人 / 操作类型 / 目标表）
+const operatorOptions = ref<string[]>([])
+const operationTypeOptions = ref<Array<{ label: string; value: string }>>([])
+const targetTableOptions = ref<Array<{ label: string; value: string }>>([])
 
 const opTypeLabel = (type: string) => {
   const map: Record<string, string> = { create: '新增', update: '修改', delete: '删除' }
@@ -158,9 +155,28 @@ const opTypeLabel = (type: string) => {
 const tableLabel = (table: string) => {
   const map: Record<string, string> = {
     grade_seven: '七年级成绩', grade_eight: '八年级成绩', grade_nine: '九年级成绩',
-    admission: '中招成绩', admins: '管理员', materials: '材料文件'
+    admission: '中招成绩', admins: '管理员', materials: '材料文件',
+    grade_reconsiderations: '复核申请', grade_duplicates: '重复数据',
+    grade_submissions: '成绩上报'
   }
   return map[table] || table
+}
+
+const loadOptions = async () => {
+  try {
+    const res = await logApi.getOptions()
+    operatorOptions.value = Array.isArray(res?.operators) ? res.operators : []
+    operationTypeOptions.value = (res?.operationTypes || []).map((v: string) => ({
+      label: opTypeLabel(v),
+      value: v
+    }))
+    targetTableOptions.value = (res?.targetTables || []).map((v: string) => ({
+      label: tableLabel(v),
+      value: v
+    }))
+  } catch (err: any) {
+    ElMessage.error(err?.message || '加载筛选项失败')
+  }
 }
 
 const formatTime = (val: string) => {
@@ -214,7 +230,9 @@ const loadData = async () => {
     tableData.value = result.list || []
     total.value = result.total || 0
   } catch (err: any) {
-    ElMessage.error(err.message || '加载操作日志失败')
+    tableData.value = []
+    total.value = 0
+    ElMessage.error(err?.message || '加载操作日志失败')
   } finally {
     loading.value = false
   }
@@ -232,14 +250,16 @@ const resetFilter = () => {
   loadData()
 }
 
-onMounted(() => { loadData() })
+onMounted(() => {
+  loadOptions()
+  loadData()
+})
 </script>
 
 <style scoped lang="scss">
 .operation-logs-page {
-  padding: 24px;
+  @include page-container;
   background: var(--bg-page);
-  min-height: 100%;
 
   :deep(.el-card) {
     border-radius: 24px;

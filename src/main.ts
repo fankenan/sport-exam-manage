@@ -1,33 +1,22 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import ElementPlus from 'element-plus'
-import * as ElementPlusIconsVue from '@element-plus/icons-vue'
-import 'element-plus/dist/index.css'
-import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
 
+// Element Plus 采用「按需引入」：
+//   - unplugin-vue-components  自动引入模板中用到的组件及其样式
+//   - unplugin-auto-import      自动引入 ElMessage / ElMessageBox 等 API
+// 因此这里不再 app.use(ElementPlus) 全量引入，也不再整包 import CSS。
 import App from './App.vue'
 import router from './router'
-import { useAuthStore } from './stores/auth'
-import { useGradeStore } from './stores/grade'
+import { useAuthStore } from '@/stores/auth'
 
 const app = createApp(App)
 const pinia = createPinia()
 
-for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
-  app.component(key, component)
-}
-
 app.use(pinia)
 app.use(router)
-app.use(ElementPlus, { locale: zhCn })
 app.mount('#app')
 
-// 初始化：先验证登录状态，登录成功后再加载成绩数据
+// 初始化：先验证登录状态；成绩数据改为「按需加载」，
+// 不再在启动时拉取全量数据（详见 stores/grade.ts）
 const authStore = useAuthStore()
-const gradeStore = useGradeStore()
-
-authStore.init().then(() => {
-  if (authStore.isAuthenticated) {
-    gradeStore.loadFromStorage()
-  }
-})
+authStore.init()

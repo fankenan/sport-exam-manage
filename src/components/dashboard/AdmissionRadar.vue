@@ -9,6 +9,7 @@ import { use } from 'echarts/core'
 import { BarChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+import { CHART_COLORS, paletteAt } from './chartTheme'
 
 use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])
 
@@ -20,28 +21,26 @@ const props = defineProps<Props>()
 
 const option = computed(() => ({
   tooltip: { trigger: 'axis' as const },
-  grid: { left: '8%', right: '8%', top: 16, bottom: 16, containLabel: true },
+  grid: { left: 40, right: 24, top: 16, bottom: 24, containLabel: true },
   xAxis: {
     type: 'category' as const,
     data: ['长跑', '跳绳', '跳远', '足(篮)球', '武术'],
     axisLabel: { fontSize: 11 },
+    axisLine: { lineStyle: { color: 'var(--border)' } },
   },
   yAxis: {
     type: 'value' as const,
     max: 20,
     axisLabel: { fontSize: 10 },
+    splitLine: { lineStyle: { color: 'var(--border-light)' } },
   },
   series: [{
-    type: 'bar',
+    type: 'bar' as const,
     data: [
-      { value: props.longRun, itemStyle: { color: '#00c6ff' } },
-      { value: props.ropeSkipping, itemStyle: { color: '#8b5cf6' } },
-      { value: props.longJump, itemStyle: { color: '#6366f1' } },
-      { value: props.ballSports, itemStyle: { color: '#06b6d4' } },
-      { value: props.martialArts, itemStyle: { color: '#a855f7' } },
-    ],
-    barWidth: '50%',
-    itemStyle: { borderRadius: [4, 4, 0, 0] },
-  }]
+      props.longRun, props.ropeSkipping, props.longJump, props.ballSports, props.martialArts,
+    ].map((value, i) => ({ value, itemStyle: { color: paletteAt(i) } })),
+    barWidth: '46%',
+    itemStyle: { borderRadius: [5, 5, 0, 0] },
+  }],
 }))
 </script>

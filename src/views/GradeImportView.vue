@@ -1,13 +1,82 @@
 <template>
   <div class="grade-import-page">
-    <div class="import-section">
-      <div class="card-header">
-        <el-button type="primary" @click="downloadTemplate">
-          <el-icon><Download /></el-icon>
-          下载模板
-        </el-button>
-      </div>
+    <!-- 顶部说明：当前身份对应的落点 -->
+    <el-alert
+      :type="authStore.isSchoolUser ? 'warning' : 'info'"
+      :closable="false"
+      show-icon
+      class="mode-alert"
+    >
+      <template #title>
+        <template v-if="isRegistrationMode">
+          当前身份：<b>{{ authStore.userSchoolName }}</b> —— 九年级由学校上报<b>报名信息</b>，
+          教育局审核通过名单并导入成绩后，才会计入正式成绩表。
+        </template>
+        <template v-else-if="authStore.isSchoolUser">
+          当前身份：<b>{{ authStore.userSchoolName }}</b> —— 导入的成绩将<b>提交管理员审核</b>，审核发布后才会计入正式成绩表。
+        </template>
+        <template v-else>
+          当前身份：<b>管理员</b> —— 导入的成绩将<b>直接写入正式成绩表</b>，并记录操作日志。
+        </template>
+      </template>
+    </el-alert>
 
+    <!-- 上报条件：学校账号需要显式选年份与年级 -->
+    <div v-if="authStore.isSchoolUser" class="form-card card-surface">
+      <el-form :inline="true" label-position="top">
+        <el-form-item label="毕业年份">
+          <el-select v-model="form.year" placeholder="请选择" style="width: 160px">
+            <el-option v-for="y in yearOptions" :key="y" :label="y + '届'" :value="y" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="上报年级">
+          <el-select v-model="form.gradeLevel" placeholder="请选择" style="width: 160px" @change="resetAll">
+            <el-option label="七年级" value="seven" />
+            <el-option label="八年级" value="eight" />
+            <el-option label="九年级（上报报名信息）" value="nine" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="&nbsp;">
+          <el-button type="primary" plain :disabled="!form.gradeLevel" @click="downloadTemplate">
+            <el-icon><Download /></el-icon>
+            {{ isRegistrationMode ? '下载报名表模板' : '下载上报模板' }}
+          </el-button>
+        </el-form-item>
+      </el-form>
+    </div>
+
+    <!-- 管理员：导入类型 -->
+    <div v-else class="form-card card-surface">
+      <el-form :inline="true" label-position="top">
+        <el-form-item label="毕业年份">
+          <el-select v-model="form.year" placeholder="请选择" style="width: 160px">
+            <el-option v-for="y in yearOptions" :key="y" :label="y + '届'" :value="y" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="导入类型">
+          <el-radio-group v-model="adminMode" @change="resetAll">
+            <el-radio-button value="score78">七/八年级成绩</el-radio-button>
+            <el-radio-button value="score9">九年级成绩</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="&nbsp;">
+          <el-button type="primary" plain :disabled="!form.year" @click="downloadTemplate">
+            <el-icon><Download /></el-icon>
+            {{ isNineScoreMode ? '下载成绩模板' : '下载导入模板' }}
+          </el-button>
+        </el-form-item>
+      </el-form>
+      <el-alert
+        v-if="isNineScoreMode"
+        type="info"
+        :closable="false"
+        show-icon
+        title="九年级成绩按身份证号与学校上报的报名名单匹配，导入时会校验「性别 ↔ 长跑项目（男生1000米 / 女生800米）」以及球类项目是否与报名一致。"
+      />
+    </div>
+
+    <!-- 上传区 -->
+    <div class="upload-card card-surface">
       <el-upload
         class="upload-area"
         drag
@@ -22,893 +91,1035 @@
           <em>点击上传</em> 或拖拽文件到此处
         </div>
         <div class="upload-tip">
-          支持 .xlsx 和 .xls 格式，文件大小不超过 10MB
+          支持 .xlsx / .xls 格式，文件大小不超过 10MB，单次最多 5 万行
+          <template v-if="isRegistrationMode">；请上传「九年级报名表」，列含性别、长跑项目、球类项目；<b>备注有内容时（病免/残免/弃考等）项目列必须留空</b></template>
+          <template v-else-if="isNineScoreMode">；请上传「九年级成绩表」，按身份证号匹配报名名单</template>
+          <template v-else-if="!authStore.isSchoolUser">；年级由系统自动识别，可混合七/八年级</template>
         </div>
       </el-upload>
-      
+
       <div v-if="uploadedFile" class="file-info">
-        <el-alert
-          :title="`已选择文件: ${uploadedFile.name}`"
-          type="success"
-          :closable="false"
-          show-icon
-        />
-        <div class="import-actions">
-          <el-button type="primary" :loading="importing" @click="processImport">
-            开始导入
+        <el-alert :title="`已选择文件：${uploadedFile.name}`" type="success" :closable="false" show-icon />
+        <div class="file-actions">
+          <el-button type="primary" :loading="checking" @click="runPreview">
+            {{ isRegistrationMode ? '预检报名信息' : '校验并预览差异' }}
           </el-button>
-          <el-button type="default" @click="clearFile">重新选择</el-button>
+          <el-button @click="clearFile">重新选择</el-button>
         </div>
       </div>
     </div>
 
-    <div v-if="previewData.length > 0" class="preview-section">
+    <!-- 预检结果 -->
+    <div v-if="previewResult" class="result-card card-surface">
       <div class="section-header">
-        <div class="header-actions">
-            <el-tag :type="detectedGrade === 'unknown' ? 'danger' : 'success'">
-              检测到: {{ gradeText }}
-            </el-tag>
-            <el-button type="danger" size="small" @click="clearPreview">
-              清除预览
-            </el-button>
-          </div>
+        <div class="header-title">校验结果</div>
+        <el-tag v-if="previewResult.valid" type="success" effect="light">
+          校验通过
+        </el-tag>
+        <el-tag v-else type="danger" effect="light">
+          发现 {{ previewResult.errorCount }} 处问题
+        </el-tag>
+      </div>
+
+      <!-- 报名模式：只报人数 -->
+      <div v-if="previewResult.valid && isRegistrationMode" class="diff-summary">
+        <div class="diff-item">
+          <div class="diff-value new">{{ previewResult.totalRows }}</div>
+          <div class="diff-label">可报名人数</div>
         </div>
+      </div>
 
-      <div class="preview-table-wrapper">
-        <el-table
-          :data="previewData"
-          border
-          stripe
-          height="400"
-          style="width: 100%"
-        >
-          <el-table-column
-            v-for="col in previewColumns"
-            :key="col.prop"
-            :prop="col.prop"
-            :label="col.label"
-            :width="col.width"
-            show-overflow-tooltip
-          />
-        </el-table>
+      <!-- 九年级成绩：只报可导入人数 -->
+      <div v-else-if="previewResult.valid && isNineScoreMode" class="diff-summary">
+        <div class="diff-item">
+          <div class="diff-value new">{{ previewResult.newCount }}</div>
+          <div class="diff-label">可导入成绩</div>
+        </div>
+        <div class="diff-item">
+          <div class="diff-value total">{{ previewResult.totalRows }}</div>
+          <div class="diff-label">文件行数</div>
+        </div>
       </div>
-      
-      <div class="import-summary">
-        <el-statistic title="总记录数" :value="previewData.length" />
-        <el-popover placement="bottom" :width="550" trigger="hover" :disabled="duplicateCount === 0">
-          <template #reference>
-            <el-statistic title="重复数据" :value="duplicateCount" value-style="color: #f56c6c; cursor: pointer; text-decoration: underline" />
-          </template>
-          <el-table :data="duplicateList" border size="small" max-height="300">
-            <el-table-column type="index" label="序号" width="50" align="center" />
-            <el-table-column prop="school" label="学校" min-width="120" show-overflow-tooltip />
-            <el-table-column prop="name" label="姓名" width="80" align="center" />
-            <el-table-column prop="idCard" label="身份证号" min-width="160" show-overflow-tooltip />
-          </el-table>
-        </el-popover>
-        <el-statistic title="有效数据" :value="previewData.length - duplicateCount" value-style="color: #67c23a" />
-      </div>
-      
-      <div class="import-actions-bottom">
-        <el-button type="primary" size="large" :loading="importing" :disabled="authStore.isSchoolUser && duplicateCount > 0" @click="confirmImport">
-          确认导入
-        </el-button>
-        <el-button type="default" size="large" @click="clearPreview">取消</el-button>
-      </div>
-    </div>
 
-    <el-dialog
-      v-model="duplicateDialogVisible"
-      title="发现重复数据"
-      width="700px"
-    >
+      <!-- 成绩模式：差异概览 -->
+      <div v-else-if="previewResult.valid" class="diff-summary">
+        <div class="diff-item">
+          <div class="diff-value new">{{ previewResult.newCount }}</div>
+          <div class="diff-label">新增</div>
+        </div>
+        <div class="diff-item">
+          <div class="diff-value update">{{ previewResult.updateCount }}</div>
+          <div class="diff-label">更新</div>
+        </div>
+        <div class="diff-item">
+          <div class="diff-value same">{{ previewResult.sameCount }}</div>
+          <div class="diff-label">无变化</div>
+        </div>
+        <div class="diff-item">
+          <div class="diff-value total">{{ previewResult.totalRows }}</div>
+          <div class="diff-label">总行数</div>
+        </div>
+        <div class="diff-item" v-if="mismatchCount > 0">
+          <div class="diff-value mismatch">{{ mismatchCount }}</div>
+          <div class="diff-label">合计不符</div>
+        </div>
+      </div>
+
       <el-alert
-        :title="authStore.isSchoolUser ? '以下数据在系统中已存在，学校账号无法导入重复数据，请联系管理员处理' : '以下数据在系统中已存在，点击确认将排除重复数据，仅导入唯一数据'"
+        v-if="previewResult.valid && mismatchCount > 0"
         type="warning"
         :closable="false"
         show-icon
-        style="margin-bottom: 16px"
+        class="mismatch-alert"
+        :title="`有 ${mismatchCount} 条记录的「合计」与出勤率 + 体育考试 + 体测之和不符，导入后会被标记为校对异常，请确认是否为原始数据的问题。`"
       />
-      <el-table :data="duplicateList" border size="small" height="300">
-        <el-table-column prop="school" label="学校名称" min-width="180" />
-        <el-table-column prop="name" label="姓名" width="100" />
-        <el-table-column prop="idCard" label="身份证号" min-width="180" />
-      </el-table>
-      <template #footer>
-        <el-button type="default" @click="duplicateDialogVisible = false">取消</el-button>
-        <el-button v-if="!authStore.isSchoolUser" type="primary" @click="handleDuplicateConfirm">
-          确认（排除重复）
-        </el-button>
-      </template>
-    </el-dialog>
 
-    <!-- 导入错误详情弹窗 -->
-    <el-dialog v-model="errorDialogVisible" title="导入校验错误" width="800px">
-      <el-alert
-        :title="`共发现 ${importErrors.length} 条错误，请修正后重新导入`"
-        type="error"
-        :closable="false"
-        show-icon
-        style="margin-bottom: 16px"
-      />
-      <el-table :data="importErrors" border size="small" max-height="400">
-        <el-table-column type="index" label="序号" width="60" align="center" />
-        <el-table-column prop="row" label="Excel行号" width="100" align="center" />
-        <el-table-column prop="field" label="字段" width="140">
+      <!-- 错误清单 -->
+      <template v-if="!previewResult.valid">
+        <el-table :data="previewResult.errors" border size="small" max-height="320">
+          <el-table-column type="index" label="序号" :width="60" :min-width="60" align="center" />
+          <el-table-column prop="row" label="Excel行号" :width="100" :min-width="100" align="center" />
+          <el-table-column prop="field" label="字段" :width="150" :min-width="150">
+            <template #default="{ row }">
+              <el-tag type="danger" size="small">{{ row.field }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="message" label="错误说明" min-width="320" show-overflow-tooltip />
+        </el-table>
+        <div class="tip-row">
+          <el-button type="danger" plain @click="exportErrors">导出错误清单</el-button>
+          <span class="tip-text">导出后可对照修正，再重新上传</span>
+        </div>
+      </template>
+
+      <!-- 九年级成绩：逐条预览 -->
+      <template v-if="previewResult.valid && isNineScoreMode">
+        <el-table :data="nineScorePreview" border stripe size="small" max-height="320">
+          <el-table-column type="index" label="序号" :width="60" :min-width="60" align="center" />
+          <el-table-column prop="school" label="学校" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="name" label="姓名" :width="100" :min-width="100" />
+          <el-table-column prop="identityId" label="身份ID" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="longRunEvent" label="长跑项目" :width="100" :min-width="100" align="center" />
+          <el-table-column prop="longRun" label="长跑" :width="80" :min-width="80" align="center" />
+          <el-table-column prop="ropeSkipping" label="跳绳" :width="80" :min-width="80" align="center" />
+          <el-table-column prop="longJump" label="跳远" :width="80" :min-width="80" align="center" />
+          <el-table-column prop="ballEvent" label="球类项目" :width="100" :min-width="100" align="center" />
+          <el-table-column prop="ballSports" label="足(篮)球" :width="90" :min-width="90" align="center" />
+          <el-table-column prop="martialArts" label="武术" :width="80" :min-width="80" align="center" />
+        </el-table>
+        <div class="tip-row">
+          <span class="tip-text">以上成绩将同时写入「九年级成绩」与「中招体育成绩」两张表。</span>
+        </div>
+      </template>
+
+      <!-- 差异明细 -->
+      <template v-else-if="!isRegistrationMode && !isNineScoreMode">
+        <el-tabs v-model="diffTab" class="diff-tabs">
+          <el-tab-pane :label="`新增 (${previewResult.newCount})`" name="new">
+            <el-table :data="previewResult.newRows" border stripe size="small" max-height="300">
+              <el-table-column prop="row" label="Excel行号" :width="100" :min-width="100" align="center" />
+              <el-table-column prop="school" label="学校" min-width="140" show-overflow-tooltip />
+              <el-table-column prop="name" label="姓名" :width="110" :min-width="110" />
+              <el-table-column prop="idCard" label="身份证号" min-width="180" show-overflow-tooltip />
+            </el-table>
+          </el-tab-pane>
+          <el-tab-pane :label="`更新 (${previewResult.updateCount})`" name="update">
+            <el-table :data="previewResult.updateRows" border stripe size="small" max-height="300">
+              <el-table-column prop="row" label="Excel行号" :width="100" :min-width="100" align="center" />
+              <el-table-column prop="school" label="学校" min-width="130" show-overflow-tooltip />
+              <el-table-column prop="name" label="姓名" :width="100" :min-width="100" />
+              <el-table-column prop="idCard" label="身份证号" min-width="170" show-overflow-tooltip />
+              <el-table-column label="变动字段" min-width="280">
+                <template #default="{ row }">
+                  <el-tag
+                    v-for="(c, i) in row.changes"
+                    :key="i"
+                    size="small"
+                    type="warning"
+                    class="change-tag"
+                  >
+                    {{ FIELD_LABELS[c.field] || c.field }}：{{ c.from ?? '空' }} → {{ c.to ?? '空' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+          <el-tab-pane :label="`无变化 (${previewResult.sameCount})`" name="same">
+            <el-table :data="previewResult.sameRows" border stripe size="small" max-height="300">
+              <el-table-column prop="row" label="Excel行号" :width="100" :min-width="100" align="center" />
+              <el-table-column prop="school" label="学校" min-width="140" show-overflow-tooltip />
+              <el-table-column prop="name" label="姓名" :width="110" :min-width="110" />
+              <el-table-column prop="idCard" label="身份证号" min-width="180" show-overflow-tooltip />
+            </el-table>
+          </el-tab-pane>
+        </el-tabs>
+      </template>
+
+      <!-- 提交栏（三种模式共用） -->
+      <div v-if="previewResult.valid" class="submit-row">
+        <template v-if="!authStore.isSchoolUser && !isRegistrationMode && previewResult.updateCount > 0">
+          <el-radio-group v-model="importMode" size="default">
+            <el-radio value="all">导入全部（新增 + 更新 {{ previewResult.updateCount }} 条）</el-radio>
+            <el-radio value="onlyNew">仅导入新增，更新项暂存到「待处理」</el-radio>
+          </el-radio-group>
+        </template>
+        <el-button
+          type="primary"
+          size="large"
+          :loading="submitting"
+          :disabled="isRegistrationMode ? previewResult.totalRows === 0 : previewResult.newCount + previewResult.updateCount === 0"
+          @click="doSubmit"
+        >
+          {{ submitButtonText }}
+        </el-button>
+        <el-button size="large" @click="clearAll">取消</el-button>
+      </div>
+    </div>
+
+    <!-- 我的上报记录（仅学校账号） -->
+    <div v-if="authStore.isSchoolUser" class="history-card card-surface">
+      <div class="section-header">
+        <div class="header-title">{{ isRegistrationMode ? '我的报名记录' : '我的上报记录' }}</div>
+        <el-button text :loading="loadingHistory" @click="loadHistory">
+          <el-icon><Refresh /></el-icon>
+          刷新
+        </el-button>
+      </div>
+
+      <!-- 报名记录 -->
+      <el-table v-if="isRegistrationMode" v-loading="loadingHistory" :data="history" border stripe size="small">
+        <el-table-column type="index" label="#" :width="64" :min-width="64" align="center" />
+        <el-table-column prop="graduationYear" label="年份" :width="90" :min-width="90" align="center">
+          <template #default="{ row }">{{ row.graduationYear }}届</template>
+        </el-table-column>
+        <el-table-column prop="name" label="姓名" :width="100" :min-width="100" />
+        <el-table-column prop="gender" label="性别" :width="70" :min-width="70" align="center" />
+        <el-table-column prop="idCard" label="身份证号" :width="190" :min-width="190" show-overflow-tooltip />
+        <el-table-column prop="registrationNumber" label="报名序号" :width="100" :min-width="100" align="center" />
+        <el-table-column prop="longRunEvent" label="长跑项目" :width="94" :min-width="94" align="center" />
+        <el-table-column prop="ballEvent" label="球类项目" :width="94" :min-width="94" align="center" />
+        <el-table-column prop="status" label="状态" :width="104" :min-width="104" align="center">
           <template #default="{ row }">
-            <el-tag type="danger" size="small">{{ row.field }}</el-tag>
+            <el-tag :type="REG_STATUS_TYPES[row.status] || 'info'" size="small">
+              {{ REG_STATUS_LABELS[row.status] || row.status }}
+            </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="message" label="错误说明" min-width="300" show-overflow-tooltip />
+        <el-table-column prop="rejectReason" label="驳回原因" :width="180" :min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.rejectReason || '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="createdAt" label="提交时间" :width="168" :min-width="168">
+          <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
+        </el-table-column>
+        <template #empty>
+          <el-empty description="还没有报名记录" :image-size="90" />
+        </template>
       </el-table>
-      <template #footer>
-        <el-button type="primary" @click="errorDialogVisible = false">知道了</el-button>
-      </template>
-    </el-dialog>
+
+      <!-- 成绩上报记录 -->
+      <el-table v-else v-loading="loadingHistory" :data="history" border stripe size="small">
+        <el-table-column type="index" label="#" :width="64" :min-width="64" align="center" />
+        <el-table-column prop="graduationYear" label="年份" :width="94" :min-width="94" align="center">
+          <template #default="{ row }">{{ row.graduationYear }}届</template>
+        </el-table-column>
+        <el-table-column prop="gradeLevel" label="年级" :width="94" :min-width="94" align="center">
+          <template #default="{ row }">{{ GRADE_LABELS[row.gradeLevel] || row.gradeLevel }}</template>
+        </el-table-column>
+        <el-table-column prop="rowCount" label="条数" :width="80" :min-width="80" align="center" />
+        <el-table-column prop="newCount" label="新增" :width="76" :min-width="76" align="center" />
+        <el-table-column prop="updateCount" label="更新" :width="76" :min-width="76" align="center" />
+        <el-table-column prop="status" label="状态" :width="104" :min-width="104" align="center">
+          <template #default="{ row }">
+            <el-tag :type="STATUS_TYPES[row.status] || 'info'" size="small">
+              {{ STATUS_LABELS[row.status] || row.status }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="rejectReason" label="驳回原因" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.rejectReason || '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="createdAt" label="提交时间" :width="168" :min-width="168">
+          <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
+        </el-table-column>
+        <template #empty>
+          <el-empty description="还没有上报记录" :image-size="90" />
+        </template>
+      </el-table>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { UploadFilled, Download } from '@element-plus/icons-vue'
-import * as XLSX from 'xlsx'
-import { useGradeStore } from '@/stores/grade'
+import { ref, reactive, computed, onMounted } from 'vue'
+import { UploadFilled, Download, Refresh } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
+import { dataApi, submissionApi, registrationApi } from '@/api'
 import { useAuthStore } from '@/stores/auth'
-import { dataApi } from '@/api'
-import { useRouter } from 'vue-router'
+import {
+  loadXLSX, parseGradeFile, parseRegistrationFile, parseNineScoreFile,
+  cellVal, cellNum, readIdCard,
+  normalizeIdCard, normalizeGradeValue, downloadWorkbook,
+  type GradeLevel,
+} from '@/utils/excel'
+import { formatDateTime } from '@/utils/date'
 
 const router = useRouter()
-const gradeStore = useGradeStore()
+const route = useRoute()
 const authStore = useAuthStore()
 
+const GRADE_LABELS: Record<string, string> = { seven: '七年级', eight: '八年级', nine: '九年级' }
+const STATUS_LABELS: Record<string, string> = {
+  draft: '草稿', submitted: '待审核', approved: '已通过', rejected: '已驳回', published: '已发布',
+}
+const STATUS_TYPES: Record<string, any> = {
+  draft: 'info', submitted: 'warning', approved: 'success', rejected: 'danger', published: 'success',
+}
+/** 报名记录的状态 */
+const REG_STATUS_LABELS: Record<string, string> = {
+  pending: '待审核', approved: '待导入成绩', rejected: '已驳回', scored: '已导入成绩',
+}
+const REG_STATUS_TYPES: Record<string, any> = {
+  pending: 'warning', approved: 'primary', rejected: 'danger', scored: 'success',
+}
+const FIELD_LABELS: Record<string, string> = {
+  attendance_score: '出勤率', exam_score: '体育考试', fitness_score: '体测',
+  total: '合计', graduation_year: '毕业年份',
+  long_run: '长跑', rope_skipping: '跳绳', long_jump: '跳远',
+  ball_sports: '足(篮)球', martial_arts: '武术',
+}
+
+const TABLE_BY_LEVEL: Record<string, string> = {
+  seven: 'grade_seven', eight: 'grade_eight', nine: 'grade_nine',
+}
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024
+
+const form = reactive({ year: '', gradeLevel: '' as GradeLevel | '' })
+const yearOptions = ref<string[]>([])
 const uploadedFile = ref<File | null>(null)
-const importing = ref(false)
-const previewData = ref<any[]>([])
-const previewColumns = ref<any[]>([])
-const detectedGrade = ref<'seven' | 'eight' | 'nine' | 'unknown' | 'mixed'>('unknown')
-const duplicateList = ref<Array<{school: string, name: string, idCard: string}>>([])
-const duplicateDialogVisible = ref(false)
-const duplicateCount = ref(0)
+const checking = ref(false)
+const submitting = ref(false)
+const loadingHistory = ref(false)
+const diffTab = ref('new')
+const importMode = ref<'all' | 'onlyNew'>('all')
+const history = ref<any[]>([])
 
-const importErrors = ref<Array<{row: number, field: string, message: string}>>([])
-const errorDialogVisible = ref(false)
+interface DiffRow { row: number; name: string; idCard: string; school: string; changes?: any[] }
+interface PreviewResult {
+  valid: boolean
+  errors: Array<{ row: number; field: string; message: string }>
+  errorCount: number
+  totalRows: number
+  newCount: number
+  updateCount: number
+  sameCount: number
+  mismatchCount: number
+  newRows: DiffRow[]
+  updateRows: DiffRow[]
+  sameRows: DiffRow[]
+}
+const previewResult = ref<PreviewResult | null>(null)
 
-// 保存 worksheet 引用，用于读取 cell 格式化值（解决身份证号数字精度问题）
-let currentSheet: XLSX.WorkSheet | null = null
+/** 合计与三项之和不符的条数（导入后会被标记为校对异常），仅用于导入前提示 */
+const mismatchCount = ref(0)
 
-const gradeText = computed(() => {
-  const map: Record<string, string> = {
-    'seven': '七年级',
-    'eight': '八年级',
-    'nine': '九年级',
-    'mixed': '七/八年级混合',
-    'unknown': '无法识别'
-  }
-  return map[detectedGrade.value]
+/** 解析出来的行（含每行所属年级与学校） */
+const parsedRows = ref<any[]>([])
+
+/** 九年级成绩预检通过后的逐条清单（服务端匹配结果） */
+const nineScorePreview = ref<any[]>([])
+
+const isSchool = computed(() => authStore.isSchoolUser)
+const formatTime = (t?: string) => formatDateTime(t)
+
+/**
+ * 三种模式：
+ *  - registration 学校上传九年级报名信息（等教育局审核）
+ *  - score9       管理员导入九年级成绩（按身份证匹配报名名单）
+ *  - score78      七/八年级成绩（学校走审核，管理员直写）
+ */
+const adminMode = ref<'score78' | 'score9'>('score78')
+const isRegistrationMode = computed(() => isSchool.value && form.gradeLevel === 'nine')
+const isNineScoreMode = computed(() => !isSchool.value && adminMode.value === 'score9')
+
+const submitButtonText = computed(() => {
+  if (isRegistrationMode.value) return '提交报名信息'
+  if (isNineScoreMode.value) return '确认导入成绩'
+  return isSchool.value ? '提交上报' : '确认导入'
 })
 
-// 根据年级列内容标准化为年级标识
-const normalizeGradeValue = (grade: string, fallback: string): 'seven' | 'eight' | 'nine' => {
-  if (!grade) {
-    // 如果年级列为空，使用检测到的默认年级
-    if (fallback === 'eight') return 'eight'
-    if (fallback === 'nine') return 'nine'
-    return 'seven'
-  }
-  const s = grade.replace(/\s/g, '')
-  if (s.includes('七') || s.includes('7') || s.includes('初一')) return 'seven'
-  if (s.includes('八') || s.includes('8') || s.includes('初二')) return 'eight'
-  if (s.includes('九') || s.includes('9') || s.includes('初三')) return 'nine'
-  // 默认使用检测到的年级
-  if (fallback === 'eight') return 'eight'
-  if (fallback === 'nine') return 'nine'
-  return 'seven'
-}
+// ========== 数据加载 ==========
 
-const handleFileChange = (file: any) => {
-  if (file.raw) {
-    uploadedFile.value = file.raw
-    readExcel(file.raw)
-  }
-}
-
-const readExcel = (file: File) => {
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    try {
-      const data = new Uint8Array(e.target?.result as ArrayBuffer)
-      const workbook = XLSX.read(data, { type: 'array' })
-      const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
-      currentSheet = firstSheet // 保存引用供 parseData 使用
-      // 使用 raw: true 获取原始值，然后手动处理数字精度问题
-      const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1, raw: true }) as any[][]
-      
-      if (jsonData.length < 2) {
-        ElMessage.error('文件数据为空')
-        return
-      }
-      
-      const headers = jsonData[0] as string[]
-      detectGrade(headers)
-      processPreviewData(jsonData)
-    } catch (error) {
-      ElMessage.error('文件解析失败')
-      console.error(error)
-    }
-  }
-  reader.readAsArrayBuffer(file)
-}
-
-const detectGrade = (headers: string[]) => {
-  const headerStr = headers.join(',')
-  // 标准化表头：去除空格，统一为无括号形式便于匹配
-  const normalizedHeaderStr = headerStr.replace(/\s/g, '').replace(/（/g, '(').replace(/）/g, ')')
-
-  // 七/八年级识别：通过出勤率、体育考试、体测等关键字组合判断
-  const hasAttendance = normalizedHeaderStr.includes('出勤率') || normalizedHeaderStr.includes('出勤')
-  const hasExam = normalizedHeaderStr.includes('体育考试') || normalizedHeaderStr.includes('考试成绩')
-  const hasFitness = normalizedHeaderStr.includes('体测') || normalizedHeaderStr.includes('体质')
-
-  if (hasAttendance && hasExam && hasFitness) {
-    if (normalizedHeaderStr.includes('七年级') || normalizedHeaderStr.includes('初一')) {
-      detectedGrade.value = 'seven'
-    } else if (normalizedHeaderStr.includes('八年级') || normalizedHeaderStr.includes('初二')) {
-      detectedGrade.value = 'eight'
-    } else {
-      // 如果表头没有明确年级标识，默认按七年级处理（用户可在预览中确认）
-      detectedGrade.value = 'seven'
-    }
-    return
-  }
-
-  // 九年级识别：通过长跑、跳绳、跳远、球类、武术等关键字判断
-  const hasLongRun = normalizedHeaderStr.includes('长跑') || normalizedHeaderStr.includes('1000米') || normalizedHeaderStr.includes('800米')
-  const hasRopeSkipping = normalizedHeaderStr.includes('跳绳')
-  const hasLongJump = normalizedHeaderStr.includes('跳远')
-  const hasBallSports = normalizedHeaderStr.includes('足球') || normalizedHeaderStr.includes('篮球') || normalizedHeaderStr.includes('球')
-  const hasMartialArts = normalizedHeaderStr.includes('武术')
-
-  if (hasLongRun || hasRopeSkipping || hasLongJump || hasBallSports || hasMartialArts) {
-    detectedGrade.value = 'nine'
-    return
-  }
-
-  // 兜底：通过合计列判断（七/八年级模板有"合计"列）
-  if (normalizedHeaderStr.includes('合计')) {
-    detectedGrade.value = 'seven'
-    return
-  }
-
-  detectedGrade.value = 'unknown'
-}
-
-// 从表头构建列索引映射（兼容旧模板有学籍号和新模板无学籍号）
-function buildColMap(headers) {
-  const map: Record<string, number> = {}
-  headers.forEach((h, i) => {
-    const s = String(h || '').replace(/\s/g, '').replace(/（/g, '(').replace(/）/g, ')')
-    if (s.includes('学校') && !s.includes('毕业')) map.school = i
-    else if (s === '姓名' || s === '名字') map.name = i
-    else if (s.includes('身份证') || s.includes('身份号码')) map.idCard = i
-    else if (s.includes('学籍号') || s.includes('报名序号') || s.includes('报名号')) map.studentNumber = i
-    else if (s.includes('毕业年份') || s.includes('毕业') || s.includes('届')) map.graduationYear = i
-    else if (s.includes('年级') && !s.includes('毕业年')) map.grade = i
-    else if (s.includes('出勤率') || s.includes('出勤')) map.attendanceScore = i
-    else if (s.includes('体育考试') || s.includes('考试成绩')) map.examScore = i
-    else if (s.includes('体测') || s.includes('体质')) map.fitnessScore = i
-    else if (s === '合计' || s === '总分') map.total = i
-    else if (s.includes('长跑') || s.includes('1000米') || s.includes('800米')) map.longRun = i
-    else if (s.includes('跳绳')) map.ropeSkipping = i
-    else if (s.includes('跳远')) map.longJump = i
-    else if (s.includes('足球') || s.includes('篮球') || s.includes('球')) map.ballSports = i
-    else if (s.includes('武术')) map.martialArts = i
-    else if (s.includes('备注')) map.remark = i
-  })
-  return map
-}
-
-// 安全读取单元格值
-function cellVal(row, colMap, key, fallbackIdx) {
-  const idx = colMap[key] !== undefined ? colMap[key] : fallbackIdx
-  return idx >= 0 ? String(row[idx] || '').trim() : ''
-}
-
-// 安全读取数值单元格
-function cellNum(row, colMap, key, fallbackIdx) {
-  const idx = colMap[key] !== undefined ? colMap[key] : fallbackIdx
-  return idx >= 0 ? (parseFloat(row[idx]) || 0) : 0
-}
-
-const processPreviewData = (jsonData: any[][]) => {
-  const headers = jsonData[0] as string[]
-  const rows = jsonData.slice(1)
-
-  // 构建列映射
-  const colMap = buildColMap(headers)
-
-  // 先根据表头判断格式类型
-  const headerStr = headers.join(',')
-  const normalizedHeaderStr = headerStr.replace(/\s/g, '').replace(/（/g, '(').replace(/）/g, ')')
-
-  const hasAttendance = normalizedHeaderStr.includes('出勤率') || normalizedHeaderStr.includes('出勤')
-  const hasExam = normalizedHeaderStr.includes('体育考试') || normalizedHeaderStr.includes('考试成绩')
-  const hasFitness = normalizedHeaderStr.includes('体测') || normalizedHeaderStr.includes('体质')
-  const hasLongRun = normalizedHeaderStr.includes('长跑') || normalizedHeaderStr.includes('1000米') || normalizedHeaderStr.includes('800米')
-  const hasRopeSkipping = normalizedHeaderStr.includes('跳绳')
-
-  let formatType: 'seven-eight' | 'nine' = 'seven-eight'
-  if (hasLongRun || hasRopeSkipping) {
-    formatType = 'nine'
-  } else if (!(hasAttendance && hasExam && hasFitness)) {
-    if (!normalizedHeaderStr.includes('合计')) {
-      ElMessage.error('无法识别文件格式，请检查表头')
-      return
-    }
-  }
-
-  // 年级列索引（优先从映射获取）
-  const gradeCol = colMap.grade !== undefined ? colMap.grade : 4
-
-  // 扫描数据行的年级列，确定实际年级
-  const gradeCounts: Record<string, number> = { seven: 0, eight: 0, nine: 0 }
-  let actualGrade: 'seven' | 'eight' | 'nine' | 'mixed' = 'seven'
-
-  rows.forEach(row => {
-    const grade = String(row[gradeCol] || '').trim()
-    if (!grade) return
-
-    const normalizedGrade = grade.replace(/\s/g, '')
-    if (normalizedGrade.includes('七') || normalizedGrade.includes('7') || normalizedGrade.includes('初一')) {
-      gradeCounts.seven++
-    } else if (normalizedGrade.includes('八') || normalizedGrade.includes('8') || normalizedGrade.includes('初二')) {
-      gradeCounts.eight++
-    } else if (normalizedGrade.includes('九') || normalizedGrade.includes('9') || normalizedGrade.includes('初三')) {
-      gradeCounts.nine++
-    }
-  })
-
-  // 确定实际年级
-  const totalRows = rows.filter(row => row[0]).length
-  const sevenRatio = gradeCounts.seven / totalRows
-  const eightRatio = gradeCounts.eight / totalRows
-  const nineRatio = gradeCounts.nine / totalRows
-
-  if (formatType === 'nine') {
-    // 九年级格式，默认按九年级处理
-    actualGrade = 'nine'
-  } else {
-    // 七/八年级格式，根据数据行的年级列判断
-    if (eightRatio > 0.5) {
-      actualGrade = 'eight'
-    } else if (sevenRatio > 0.5) {
-      actualGrade = 'seven'
-    } else if (gradeCounts.eight > 0 && gradeCounts.seven > 0) {
-      // 同时有七年级和八年级
-      actualGrade = 'mixed'
-    } else if (gradeCounts.eight > 0) {
-      actualGrade = 'eight'
-    } else {
-      actualGrade = 'seven'
-    }
-  }
-
-  detectedGrade.value = actualGrade
-
-  const columns: any[] = []
-  
-  if (detectedGrade.value === 'seven' || detectedGrade.value === 'eight' || detectedGrade.value === 'mixed') {
-    columns.push(
-      { prop: 'school', label: '学校', width: 180 },
-      { prop: 'name', label: '姓名', width: 100 },
-      { prop: 'idCard', label: '身份证', width: 180 },
-      { prop: 'identityId', label: '身份ID', width: 180 },
-      { prop: 'graduationYear', label: '毕业年份', width: 100 },
-      { prop: 'grade', label: '年级', width: 80 },
-      { prop: 'attendanceScore', label: '出勤率成绩', width: 100 },
-      { prop: 'examScore', label: '体育考试成绩', width: 110 },
-      { prop: 'fitnessScore', label: '体测成绩', width: 90 },
-      { prop: 'total', label: '合计', width: 80 },
-      { prop: 'totalVerify', label: '合计校对', width: 100 },
-      { prop: 'verifyResult', label: '校对结果', width: 90 },
-      { prop: 'remark', label: '备注', width: '80', showOverflowTooltip: true }
-    )
-  } else if (detectedGrade.value === 'nine') {
-    columns.push(
-      { prop: 'school', label: '学校', width: 180 },
-      { prop: 'name', label: '姓名', width: 100 },
-      { prop: 'idCard', label: '身份证', width: 180 },
-      { prop: 'identityId', label: '身份ID', width: 180 },
-      { prop: 'graduationYear', label: '毕业年份', width: 100 },
-      { prop: 'grade', label: '年级', width: 80 },
-      { prop: 'longRun', label: '长跑', width: 80 },
-      { prop: 'ropeSkipping', label: '跳绳', width: 80 },
-      { prop: 'longJump', label: '跳远', width: 80 },
-      { prop: 'ballSports', label: '足(篮)球', width: 90 },
-      { prop: 'martialArts', label: '武术', width: 80 },
-      { prop: 'remark', label: '备注', width: '80', showOverflowTooltip: true }
-    )
-  }
-  
-  previewColumns.value = columns
-
-  const processedData: any[] = []
-  duplicateList.value = []
-  const pushedIds = new Set<string>()
-  // 本次导入文件内的身份证号去重检测
-  const idCardInFile = new Map<string, { school: string; name: string; idCard: string }>()
-
-  rows.forEach((row, index) => {
-    // 使用列映射安全读取，带兜底索引
-    const school = cellVal(row, colMap, 'school', 0)
-    const name = cellVal(row, colMap, 'name', 1)
-    if (!school && !name) return
-
-    // 提取身份证号：优先从 worksheet cell 的格式化值中获取
-    let idCard = ''
-    const idCardCol = colMap.idCard !== undefined ? colMap.idCard : 2
-    if (currentSheet) {
-      const cellRef = XLSX.utils.encode_cell({ r: index + 1, c: idCardCol })
-      const cell = currentSheet[cellRef]
-      if (cell && cell.w) {
-        idCard = String(cell.w).trim()
-      }
-    }
-    if (!idCard) {
-      idCard = String(row[idCardCol] || '').trim()
-    }
-
-    const identityId = idCard.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()
-    const graduationYear = cellVal(row, colMap, 'graduationYear', 3)
-    const grade = cellVal(row, colMap, 'grade', 4)
-    const remark = cellVal(row, colMap, 'remark', formatType === 'nine' ? 10 : 9)
-
-    const rowGrade = normalizeGradeValue(grade, detectedGrade.value)
-
-    // 检测导入文件内部的重复身份证号
-    if (idCard) {
-      const idKey = idCard.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()
-      if (idCardInFile.has(idKey)) {
-        const exist = idCardInFile.get(idKey)!
-        if (!pushedIds.has(idKey)) { duplicateList.value.push({ school: exist.school, name: exist.name, idCard: exist.idCard }); pushedIds.add(idKey) }
-        duplicateList.value.push({ school, name, idCard })
-        duplicateCount.value++
-      } else {
-        idCardInFile.set(idKey, { school, name, idCard })
-      }
-    }
-
-    // 检测与系统已有数据的重复
-    const duplicates = gradeStore.checkDuplicateIdCard(idCard, rowGrade, grade)
-    if (duplicates.length > 0 && !pushedIds.has(identityId)) {
-      duplicateList.value.push({ school, name, idCard })
-      duplicateCount.value++
-      pushedIds.add(identityId)
-    }
-
-    const baseData = {
-      school,
-      name,
-      idCard,
-      identityId,
-      graduationYear,
-      grade,
-      remark,
-      _rowGrade: rowGrade
-    }
-
-    if (formatType === 'seven-eight') {
-      const attendanceScore = cellNum(row, colMap, 'attendanceScore', 5)
-      const examScore = cellNum(row, colMap, 'examScore', 6)
-      const fitnessScore = cellNum(row, colMap, 'fitnessScore', 7)
-      const total = cellNum(row, colMap, 'total', 8)
-      const totalVerify = parseFloat((attendanceScore + examScore + fitnessScore).toFixed(1))
-      const verifyResult = Math.abs(totalVerify - total) < 0.1
-
-      processedData.push({
-        ...baseData,
-        attendanceScore,
-        examScore,
-        fitnessScore,
-        total,
-        totalVerify,
-        verifyResult: verifyResult ? '✅' : '❌'
-      })
-    } else if (formatType === 'nine') {
-      processedData.push({
-        ...baseData,
-        longRun: cellNum(row, colMap, 'longRun', 5),
-        ropeSkipping: cellNum(row, colMap, 'ropeSkipping', 6),
-        longJump: cellNum(row, colMap, 'longJump', 7),
-        ballSports: cellNum(row, colMap, 'ballSports', 8),
-        martialArts: cellNum(row, colMap, 'martialArts', 9)
-      })
-    }
-  })
-  
-  previewData.value = processedData
-}
-
-// 页面加载时同步数据，确保重复检测能对比系统已有数据
-onMounted(async () => {
+const loadYears = async () => {
   try {
-    const res = await dataApi.sync()
-    if (res) {
-      gradeStore.gradeSevenList = res.gradeSevenList || []
-      gradeStore.gradeEightList = res.gradeEightList || []
-      gradeStore.gradeNineList = res.gradeNineList || []
-      gradeStore.admissionList = res.admissionList || []
+    yearOptions.value = await dataApi.getYears()
+    // 学校第一次上传时成绩表里还没有数据，年份列表会是空的 —— 用当前年份兜底
+    if (!form.year) {
+      form.year = yearOptions.value[0] || String(new Date().getFullYear())
     }
-  } catch { /* ignore */ }
-})
-
-const processImport = async () => {
-  if (detectedGrade.value === 'unknown') {
-    ElMessageBox.confirm(
-      '系统无法自动识别该文件的年级类型，请手动选择。',
-      '请选择年级',
-      {
-        confirmButtonText: '七/八年级',
-        cancelButtonText: '九年级',
-        distinguishCancelAndClose: true,
-        type: 'warning'
-      }
-    ).then(() => {
-      detectedGrade.value = 'seven'
-      // 重新处理预览数据
-      if (uploadedFile.value) {
-        readExcel(uploadedFile.value)
-      }
-      ElMessage.info('已识别为七/八年级格式，请确认预览数据')
-    }).catch((action) => {
-      if (action === 'cancel') {
-        // 学校用户不能导入九年级成绩
-        if (authStore.isSchoolUser) {
-          ElMessage.error('学校账号无法导入九年级成绩，请使用管理员账号操作')
-          detectedGrade.value = 'unknown'
-          previewData.value = []
-          previewColumns.value = []
-          return
-        }
-        detectedGrade.value = 'nine'
-        // 重新处理预览数据
-        if (uploadedFile.value) {
-          readExcel(uploadedFile.value)
-        }
-        ElMessage.info('已识别为九年级格式，请确认预览数据')
-      }
-    })
-    return
-  }
-  
-  if (previewData.value.length === 0) {
-    ElMessage.warning('没有可导入的数据，请检查文件内容')
-    return
-  }
-
-  if (duplicateList.value.length > 0) {
-    // 暂存重复数据到后端
-    try {
-      const dupRows = duplicateList.value.map(d => {
-        const item = previewData.value.find(p => p.idCard === d.idCard)
-        if (!item) return null
-        return {
-          school: item.school || '', name: item.name || '', idCard: item.idCard || '',
-          identityId: item.identityId || '', graduationYear: item.graduationYear || '',
-          grade: item.grade || '', gradeLevel: detectedGrade.value,
-          attendanceScore: item.attendanceScore ?? null, examScore: item.examScore ?? null,
-          fitnessScore: item.fitnessScore ?? null, total: item.total ?? null,
-          totalVerify: item.totalVerify ?? null,
-          verifyResult: (item.verifyResult === '✅' || item.verifyResult === true) ? 1 : 0,
-          longRun: item.longRun ?? null, ropeSkipping: item.ropeSkipping ?? null,
-          longJump: item.longJump ?? null, ballSports: item.ballSports ?? null,
-          martialArts: item.martialArts ?? null,
-          remark: item.remark || ''
-        }
-      }).filter(Boolean)
-      if (dupRows.length > 0) {
-        await dataApi.saveDuplicates(dupRows)
-      }
-    } catch (e: any) { console.error('暂存重复数据失败', e) }
-    duplicateDialogVisible.value = true
-  } else {
-    confirmImport()
+  } catch (err: any) {
+    ElMessage.error('加载年份失败：' + (err.message || ''))
+    if (!form.year) form.year = String(new Date().getFullYear())
   }
 }
 
-const handleDuplicateConfirm = () => {
-  duplicateDialogVisible.value = false
-  confirmImport()
-}
-
-const confirmImport = async () => {
-  importing.value = true
-
+const loadHistory = async () => {
+  loadingHistory.value = true
   try {
-    // 构建重复身份证号集合（仅用于提示和查找已有ID）
-    const duplicateIdCards = new Set(duplicateList.value.map(d => d.idCard))
-
-    // 按年级分组构建所有行（包括重复数据，使用已有ID以支持更新）
-    const sevenRows: any[] = []
-    const eightRows: any[] = []
-    const nineRows: any[] = []
-    let sevenNew = 0, sevenUpd = 0, eightNew = 0, eightUpd = 0, nineNew = 0, nineUpd = 0
-
-    for (const item of previewData.value) {
-      const rowGrade = item._rowGrade || detectedGrade.value
-      const identityId = gradeStore.generateIdentityId(item.idCard)
-
-      // 查找是否已存在于对应年级列表中（用于获取已有ID）
-      const targetList = rowGrade === 'seven' ? gradeStore.gradeSevenList
-        : rowGrade === 'eight' ? gradeStore.gradeEightList
-        : gradeStore.gradeNineList
-      const existing = targetList.find((s: any) => s.identityId === identityId)
-
-      const commonData = {
-        school: item.school,
-        name: item.name,
-        idCard: item.idCard,
-        identityId,
-        graduationYear: item.graduationYear,
-        grade: item.grade,
-        remark: item.remark || ''
-      }
-
-      // ID：已有记录用旧ID（更新），新记录生成新ID
-      const rowId = existing ? existing.id : ('id_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9))
-      const isUpdate = !!existing
-
-      if (rowGrade === 'seven') {
-        const totalVerify = parseFloat(((item.attendanceScore || 0) + (item.examScore || 0) + (item.fitnessScore || 0)).toFixed(1))
-        sevenRows.push({
-          ...commonData,
-          id: rowId,
-          attendanceScore: item.attendanceScore || 0,
-          examScore: item.examScore || 0,
-          fitnessScore: item.fitnessScore || 0,
-          total: item.total || 0,
-          totalVerify,
-          verifyResult: Math.abs(totalVerify - (item.total || 0)) < 0.1 ? 1 : 0
-        })
-        isUpdate ? sevenUpd++ : sevenNew++
-      } else if (rowGrade === 'eight') {
-        const totalVerify = parseFloat(((item.attendanceScore || 0) + (item.examScore || 0) + (item.fitnessScore || 0)).toFixed(1))
-        eightRows.push({
-          ...commonData,
-          id: rowId,
-          attendanceScore: item.attendanceScore || 0,
-          examScore: item.examScore || 0,
-          fitnessScore: item.fitnessScore || 0,
-          total: item.total || 0,
-          totalVerify,
-          verifyResult: Math.abs(totalVerify - (item.total || 0)) < 0.1 ? 1 : 0
-        })
-        isUpdate ? eightUpd++ : eightNew++
-      } else if (rowGrade === 'nine') {
-        nineRows.push({
-          ...commonData,
-          id: rowId,
-          longRun: item.longRun || 0,
-          ropeSkipping: item.ropeSkipping || 0,
-          longJump: item.longJump || 0,
-          ballSports: item.ballSports || 0,
-          martialArts: item.martialArts || 0
-        })
-        isUpdate ? nineUpd++ : nineNew++
-      }
-    }
-
-    // 批量导入：每个年级只发一次 HTTP 请求
-    const promises: Promise<any>[] = []
-    if (sevenRows.length > 0) promises.push(dataApi.import('grade_seven', sevenRows))
-    if (eightRows.length > 0) promises.push(dataApi.import('grade_eight', eightRows))
-    if (nineRows.length > 0) promises.push(dataApi.import('grade_nine', nineRows))
-    await Promise.all(promises)
-
-    // 同步更新本地 store：移除已有记录，追加新数据
-    if (sevenRows.length > 0) {
-      const sevenIds = new Set(sevenRows.map(r => r.id))
-      gradeStore.gradeSevenList = gradeStore.gradeSevenList.filter(s => !sevenIds.has(s.id)).concat(sevenRows)
-    }
-    if (eightRows.length > 0) {
-      const eightIds = new Set(eightRows.map(r => r.id))
-      gradeStore.gradeEightList = gradeStore.gradeEightList.filter(s => !eightIds.has(s.id)).concat(eightRows)
-    }
-    if (nineRows.length > 0) {
-      const nineIds = new Set(nineRows.map(r => r.id))
-      gradeStore.gradeNineList = gradeStore.gradeNineList.filter(s => !nineIds.has(s.id)).concat(nineRows)
-    }
-
-    // 构建结果提示
-    const parts: string[] = []
-    if (sevenRows.length > 0) parts.push(`七年级 ${sevenNew} 条新增${sevenUpd > 0 ? '，' + sevenUpd + ' 条更新' : ''}`)
-    if (eightRows.length > 0) parts.push(`八年级 ${eightNew} 条新增${eightUpd > 0 ? '，' + eightUpd + ' 条更新' : ''}`)
-    if (nineRows.length > 0) parts.push(`九年级 ${nineNew} 条新增${nineUpd > 0 ? '，' + nineUpd + ' 条更新' : ''}`)
-    ElMessage.success(`成功导入：${parts.join('；')}`)
-
-    // 跳转
-    setTimeout(() => {
-      const sc = sevenRows.length, ec = eightRows.length, nc = nineRows.length
-      if (sc >= ec && sc >= nc) router.push('/grade-seven')
-      else if (ec >= sc && ec >= nc) router.push('/grade-eight')
-      else router.push('/grade-nine')
-    }, 1000)
-  } catch (error: any) {
-    if (error.errors && Array.isArray(error.errors)) {
-      importErrors.value = error.errors
-      errorDialogVisible.value = true
+    if (isRegistrationMode.value) {
+      const res = await registrationApi.getList({ page: 1, pageSize: 100 })
+      history.value = res.list || []
     } else {
-      ElMessage.error('导入失败：' + (error?.message || '未知错误'))
+      const res = await submissionApi.getList({ page: 1, pageSize: 50 })
+      history.value = res.list || []
     }
-    console.error(error)
+  } catch (err: any) {
+    ElMessage.error('加载上报记录失败：' + (err.message || ''))
   } finally {
-    importing.value = false
+    loadingHistory.value = false
   }
+}
+
+// ========== 文件解析 ==========
+
+const handleFileChange = async (file: any) => {
+  const raw: File | undefined = file?.raw
+  if (!raw) return
+  if (raw.size > MAX_FILE_SIZE) {
+    ElMessage.error(`文件大小 ${(raw.size / 1024 / 1024).toFixed(1)}MB 超过 10MB 限制`)
+    clearFile()
+    return
+  }
+  uploadedFile.value = raw
+  previewResult.value = null
+  parsedRows.value = []
+  nineScorePreview.value = []
 }
 
 const clearFile = () => {
   uploadedFile.value = null
-  previewData.value = []
-  previewColumns.value = []
-  detectedGrade.value = 'unknown'
-  duplicateList.value = []
-  duplicateCount.value = 0
+  previewResult.value = null
+  parsedRows.value = []
+  nineScorePreview.value = []
 }
 
-const clearPreview = () => {
-  previewData.value = []
-  previewColumns.value = []
-  detectedGrade.value = 'unknown'
-  duplicateList.value = []
-  duplicateCount.value = 0
+const clearAll = () => {
+  clearFile()
+  diffTab.value = 'new'
+  importMode.value = 'all'
 }
 
-const downloadTemplate = () => {
-  if (authStore.isSchoolUser) {
-    downloadSevenEightTemplate()
+const resetAll = () => {
+  clearAll()
+}
+
+/** 把 Excel 解析成结构化行 */
+const parseFile = async (file: File) => {
+  // 报名表 / 九年级成绩表 有各自的列结构，单独解析
+  if (isRegistrationMode.value) {
+    const { rows } = await parseRegistrationFile(file)
+    return { rows, formatType: 'registration' as const }
+  }
+  if (isNineScoreMode.value) {
+    const { rows } = await parseNineScoreFile(file)
+    return { rows, formatType: 'nineScore' as const }
+  }
+
+  const xlsx = await loadXLSX()
+  const parsed = await parseGradeFile(file)
+  const rows: any[] = []
+
+  parsed.rows.forEach((row: any[], index: number) => {
+    if (!row) return
+    const school = cellVal(row, parsed.colMap, 'school', 0)
+    const name = cellVal(row, parsed.colMap, 'name', 1)
+    if (!school && !name) return
+
+    const idCard = readIdCard(row, index, parsed.colMap, parsed.sheet, xlsx)
+    const rowGrade = normalizeGradeValue(
+      cellVal(row, parsed.colMap, 'grade', 4),
+      parsed.detectedGrade,
+    )
+    const graduationYear = cellVal(row, parsed.colMap, 'graduationYear', 3)
+      || (isSchool.value ? form.year : '')
+
+    const item: any = {
+      school: school || (isSchool.value ? authStore.userSchoolName : ''),
+      name,
+      idCard,
+      identityId: normalizeIdCard(idCard),
+      graduationYear,
+      grade: cellVal(row, parsed.colMap, 'grade', 4),
+      remark: cellVal(row, parsed.colMap, 'remark', parsed.formatType === 'nine' ? 10 : 9),
+      rowGrade,
+    }
+    if (parsed.formatType === 'nine') {
+      item.longRun = cellNum(row, parsed.colMap, 'longRun', 5)
+      item.ropeSkipping = cellNum(row, parsed.colMap, 'ropeSkipping', 6)
+      item.longJump = cellNum(row, parsed.colMap, 'longJump', 7)
+      item.ballSports = cellNum(row, parsed.colMap, 'ballSports', 8)
+      item.martialArts = cellNum(row, parsed.colMap, 'martialArts', 9)
+    } else {
+      item.attendanceScore = cellNum(row, parsed.colMap, 'attendanceScore', 5)
+      item.examScore = cellNum(row, parsed.colMap, 'examScore', 6)
+      item.fitnessScore = cellNum(row, parsed.colMap, 'fitnessScore', 7)
+      item.total = cellNum(row, parsed.colMap, 'total', 8)
+    }
+    rows.push(item)
+  })
+
+  return { rows, formatType: parsed.formatType }
+}
+
+/** 文件里没写毕业年份时，取文件中最常见的那个年份兜底 */
+const fillMissingYears = (rows: any[]) => {
+  const counter = new Map<string, number>()
+  rows.forEach(r => {
+    if (r.graduationYear) counter.set(r.graduationYear, (counter.get(r.graduationYear) || 0) + 1)
+  })
+  let fallback = ''
+  let max = 0
+  counter.forEach((v, k) => {
+    if (v > max) { max = v; fallback = k }
+  })
+  if (!fallback) fallback = yearOptions.value[0] || String(new Date().getFullYear())
+  rows.forEach(r => {
+    if (!r.graduationYear) r.graduationYear = fallback
+  })
+  return fallback
+}
+
+// ========== 预检 ==========
+
+const runPreview = async () => {
+  if (!uploadedFile.value) {
+    ElMessage.warning('请先选择要导入的文件')
     return
   }
-  ElMessageBox.confirm('请选择要下载的模板类型', '下载模板', {
-    confirmButtonText: '七/八年级模板',
-    cancelButtonText: '九年级模板',
-    distinguishCancelAndClose: true
-  }).then(() => {
-    downloadSevenEightTemplate()
-  }).catch((action) => {
-    if (action === 'cancel') {
-      downloadNineTemplate()
+  if (isSchool.value && (!form.year || !form.gradeLevel)) {
+    ElMessage.warning('请先选择毕业年份与上报年级')
+    return
+  }
+
+  checking.value = true
+  try {
+    const { rows } = await parseFile(uploadedFile.value)
+    if (rows.length === 0) {
+      ElMessage.error('文件中没有可导入的数据')
+      return
     }
-  })
+    fillMissingYears(rows)
+
+    // ---- 模式一：学校上传九年级报名信息 ----
+    if (isRegistrationMode.value) {
+      const res = await registrationApi.preview({ year: form.year, rows })
+      parsedRows.value = rows
+      previewResult.value = {
+        valid: res.valid,
+        errors: res.errors || [],
+        errorCount: res.errorCount || 0,
+        totalRows: res.totalRows || rows.length,
+        newCount: res.totalRows || rows.length,
+        updateCount: 0, sameCount: 0, mismatchCount: 0,
+        newRows: [], updateRows: [], sameRows: [],
+      }
+      diffTab.value = 'new'
+      if (res.valid) {
+        ElMessage.success(`预检通过：共 ${res.totalRows} 人可提交报名`)
+      } else {
+        ElMessage.error(`预检未通过，共 ${res.errorCount} 处问题`)
+      }
+      return
+    }
+
+    // ---- 模式二：管理员导入九年级成绩（按身份证匹配报名名单） ----
+    if (isNineScoreMode.value) {
+      const scoreRows = rows.map(toScoreRow)
+      // 先预检（dryRun）：服务端按身份证匹配名单并逐条核对，但不写库
+      try {
+        const res = await registrationApi.importScores({ year: form.year, rows: scoreRows, dryRun: true })
+        parsedRows.value = scoreRows
+        nineScorePreview.value = res.preview || []
+        previewResult.value = {
+          valid: true,
+          errors: [],
+          errorCount: 0,
+          totalRows: rows.length,
+          newCount: res.count || 0,
+          updateCount: 0, sameCount: 0, mismatchCount: 0,
+          newRows: [], updateRows: [], sameRows: [],
+        }
+        ElMessage.success(`预检通过：${res.count || 0} 条成绩可导入`)
+      } catch (e: any) {
+        // 服务端按行返回的错误清单，直接铺在「校验结果」里
+        if (e?.errors && Array.isArray(e.errors)) {
+          previewResult.value = {
+            valid: false,
+            errors: e.errors,
+            errorCount: e.errors.length,
+            totalRows: rows.length,
+            newCount: 0, updateCount: 0, sameCount: 0, mismatchCount: 0,
+            newRows: [], updateRows: [], sameRows: [],
+          }
+          ElMessage.error(`预检未通过，共 ${e.errors.length} 处问题`)
+        } else {
+          throw e
+        }
+      }
+      return
+    }
+
+    // 学校账号：只能有一个年级，且必须与所选年级一致
+    if (isSchool.value) {
+      const wrong = rows.find(r => r.rowGrade !== form.gradeLevel)
+      if (wrong) {
+        ElMessage.error(`文件中存在${GRADE_LABELS[wrong.rowGrade]}数据，与所选的${GRADE_LABELS[form.gradeLevel]}不符`)
+        return
+      }
+    }
+
+    // 按「年级 + 毕业年份」分组：管理员的文件可能是多校多年级混合
+    const groups = new Map<string, { level: GradeLevel; year: string; rows: any[] }>()
+    for (const r of rows) {
+      const year = r.graduationYear || form.year || ''
+      const key = `${r.rowGrade}||${year}`
+      if (!groups.has(key)) groups.set(key, { level: r.rowGrade, year, rows: [] })
+      groups.get(key)!.rows.push(r)
+    }
+
+    // 逐组预检，合并结果
+    const merged: PreviewResult = {
+      valid: true,
+      errors: [],
+      errorCount: 0,
+      totalRows: rows.length,
+      newCount: 0, updateCount: 0, sameCount: 0, mismatchCount: 0,
+      newRows: [], updateRows: [], sameRows: [],
+    }
+
+    for (const g of groups.values()) {
+      const res = await submissionApi.preview({
+        year: g.year,
+        gradeLevel: g.level,
+        rows: g.rows.map(stripInternal),
+      })
+      if (!res.valid) {
+        merged.valid = false
+        merged.errors.push(...(res.errors || []))
+        merged.errorCount += res.errorCount || 0
+        continue
+      }
+      merged.newCount += res.newCount
+      merged.updateCount += res.updateCount
+      merged.sameCount += res.sameCount
+      // 「合计不符」的判定规则在服务端，前端只展示结果
+      merged.mismatchCount += res.mismatchCount || 0
+      merged.newRows.push(...(res.newRows || []))
+      merged.updateRows.push(...(res.updateRows || []))
+      merged.sameRows.push(...(res.sameRows || []))
+    }
+
+    parsedRows.value = rows
+    previewResult.value = merged
+    diffTab.value = 'new'
+    mismatchCount.value = merged.mismatchCount
+
+    if (merged.valid) {
+      ElMessage.success(
+        `校验通过：新增 ${merged.newCount} 条，更新 ${merged.updateCount} 条，无变化 ${merged.sameCount} 条`
+        + (mismatchCount.value > 0 ? `，其中 ${mismatchCount.value} 条合计不符` : ''),
+      )
+    } else {
+      ElMessage.error(`校验未通过，共 ${merged.errorCount} 处问题`)
+    }
+  } catch (err: any) {
+    ElMessage.error('校验失败：' + (err.message || '未知错误'))
+  } finally {
+    checking.value = false
+  }
 }
 
-const downloadSevenEightTemplate = () => {
-  const headers = ['学校', '姓名', '身份证', '毕业年份', '年级', '出勤率成绩', '体育考试成绩', '体测成绩', '合计', '备注']
-  const ws = XLSX.utils.aoa_to_sheet([headers])
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, '模板')
-  XLSX.writeFile(wb, '七八年级成绩导入模板.xlsx')
+/** 去掉内部字段，只提交后端认识的列 */
+const stripInternal = (r: any) => {
+  const { rowGrade, ...rest } = r
+  return rest
 }
 
-const downloadNineTemplate = () => {
-  const headers = ['学校', '姓名', '身份证', '毕业年份', '年级', '长跑', '跳绳', '跳远', '足(篮)球', '武术', '备注']
-  const ws = XLSX.utils.aoa_to_sheet([headers])
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, '模板')
-  XLSX.writeFile(wb, '九年级成绩导入模板.xlsx')
+// ========== 落库 ==========
+
+/** 九年级成绩行 → 服务端需要的字段（带项目名，用于与报名信息核对）
+ *  parseNineScoreFile 返回的就是 snake_case，这里两种写法都兼容。 */
+const toScoreRow = (r: any) => ({
+  school: r.school,
+  name: r.name,
+  id_card: r.id_card ?? r.idCard,
+  long_run_event: r.long_run_event ?? r.longRunEvent,
+  long_run: r.long_run ?? r.longRun,
+  rope_skipping: r.rope_skipping ?? r.ropeSkipping,
+  long_jump: r.long_jump ?? r.longJump,
+  ball_event: r.ball_event ?? r.ballEvent,
+  ball_sports: r.ball_sports ?? r.ballSports,
+  martial_arts: r.martial_arts ?? r.martialArts,
+  remark: r.remark || '',
+})
+
+const doSubmit = async () => {
+  if (!previewResult.value?.valid) return
+  const preview = previewResult.value
+
+  // 管理员：直接写正式表；学校：提交审核
+  const actionText = isRegistrationMode.value
+    ? '提交报名信息'
+    : (isNineScoreMode.value ? '确认导入成绩' : (isSchool.value ? '提交上报' : '确认导入'))
+  const onlyNew = !isSchool.value && importMode.value === 'onlyNew'
+  const willWrite = onlyNew ? preview.newCount : preview.newCount + preview.updateCount
+  const extra = isRegistrationMode.value
+    ? '提交后将进入教育局审核，审核通过名单并导入成绩后，才会计入正式成绩表。'
+    : (isSchool.value
+        ? '提交后将进入管理员审核队列，审核通过才会计入正式成绩表。'
+        : (onlyNew
+            ? `将只导入 ${preview.newCount} 条新增记录，${preview.updateCount} 条更新项会暂存到「待处理」。`
+            : (preview.updateCount > 0
+                ? `其中 ${preview.updateCount} 条会覆盖系统中已有的记录，确定继续吗？`
+                : '导入后将立即生效。')))
+
+  try {
+    await ElMessageBox.confirm(
+      `即将${actionText} ${willWrite} 条记录，${extra}`,
+      actionText,
+      { type: 'warning', confirmButtonText: actionText, cancelButtonText: '再检查一下' },
+    )
+  } catch {
+    return
+  }
+
+  submitting.value = true
+  try {
+    // 管理员：确认导入九年级成绩（预检已通过，这里正式写库）
+    if (isNineScoreMode.value) {
+      const res = await registrationApi.importScores({
+        year: form.year,
+        rows: parsedRows.value,
+      })
+      ElMessage.success(`已导入 ${res.count || 0} 条九年级成绩（同时写入九年级成绩表与中招体育成绩表）`)
+      clearAll()
+      setTimeout(() => router.push('/grade-nine'), 800)
+      return
+    }
+
+    if (isRegistrationMode.value) {
+      // 学校：提交九年级报名信息
+      const res = await registrationApi.submit({
+        year: form.year,
+        rows: parsedRows.value.map(stripInternal),
+      })
+      ElMessage.success(`报名信息已提交：${res.count} 人，等待教育局审核`)
+      clearAll()
+      await loadHistory()
+    } else if (isSchool.value) {
+      // 学校：提交成绩上报
+      const res = await submissionApi.submit({
+        year: form.year,
+        gradeLevel: form.gradeLevel,
+        fileName: uploadedFile.value?.name || '',
+        rows: parsedRows.value.map(stripInternal),
+      })
+      ElMessage.success(`上报已提交：${res.rowCount} 条，等待管理员审核`)
+      await loadHistory()
+    } else {
+  // 管理员：按年级分组直接导入（只写新增与更新的，无变化的跳过）
+  // 用「身份证号||学校」标识一条记录，与服务端的自然键保持一致
+  const sameKeys = new Set(
+    preview.sameRows.map(s => `${normalizeIdCard(s.idCard)}||${s.school || ''}`),
+  )
+  const updateKeys = new Set(
+    preview.updateRows.map(s => `${normalizeIdCard(s.idCard)}||${s.school || ''}`),
+  )
+
+  // 「仅导入新增」模式：把被跳过的更新项暂存到「待处理」队列
+  if (importMode.value === 'onlyNew' && preview.updateCount > 0) {
+    const stashRows = parsedRows.value
+      .filter(r => updateKeys.has(`${r.identityId}||${r.school || ''}`))
+      .map(r => ({
+        school: r.school, name: r.name, idCard: r.idCard, identityId: r.identityId,
+        graduationYear: r.graduationYear, grade: r.grade, gradeLevel: r.rowGrade,
+        attendanceScore: r.attendanceScore ?? null, examScore: r.examScore ?? null,
+        fitnessScore: r.fitnessScore ?? null, total: r.total ?? null,
+        longRun: r.longRun ?? null, ropeSkipping: r.ropeSkipping ?? null,
+        longJump: r.longJump ?? null, ballSports: r.ballSports ?? null,
+        martialArts: r.martialArts ?? null, remark: r.remark || '',
+      }))
+    if (stashRows.length > 0) {
+      try {
+        await dataApi.saveDuplicates(stashRows)
+      } catch (e: any) {
+        ElMessage.warning('更新项暂存失败，将直接跳过：' + (e?.message || ''))
+      }
+    }
+  }
+
+  const byLevel = new Map<GradeLevel, any[]>()
+  for (const r of parsedRows.value) {
+    if (!byLevel.has(r.rowGrade)) byLevel.set(r.rowGrade, [])
+    byLevel.get(r.rowGrade)!.push(r)
+  }
+  const parts: string[] = []
+  for (const [level, list] of byLevel) {
+    const table = TABLE_BY_LEVEL[level]
+    const changed = list.filter(r => {
+      const key = `${r.identityId}||${r.school || ''}`
+      if (sameKeys.has(key)) return false
+      if (importMode.value === 'onlyNew' && updateKeys.has(key)) return false
+      return true
+    })
+    if (changed.length === 0) continue
+    await dataApi.import(table, changed.map(stripInternal))
+    parts.push(`${GRADE_LABELS[level]} ${changed.length} 条`)
+  }
+  ElMessage.success(`导入成功：${parts.join('；') || '没有需要写入的记录'}`)
+
+      setTimeout(() => {
+        const seven = byLevel.get('seven')?.length || 0
+        const eight = byLevel.get('eight')?.length || 0
+        const nine = byLevel.get('nine')?.length || 0
+        if (seven >= eight && seven >= nine) router.push('/grade-seven')
+        else if (eight >= seven && eight >= nine) router.push('/grade-eight')
+        else router.push('/grade-nine')
+      }, 900)
+    }
+    clearAll()
+  } catch (err: any) {
+    if (err?.errors && Array.isArray(err.errors)) {
+      ElMessage.error(`校验未通过，共 ${err.errors.length} 处问题`)
+    } else {
+      ElMessage.error((isSchool.value ? '提交失败：' : '导入失败：') + (err?.message || '未知错误'))
+    }
+  } finally {
+    submitting.value = false
+  }
 }
+
+// ========== 工具 ==========
+
+/** 导出错误清单 */
+const exportErrors = async () => {
+  const errors = previewResult.value?.errors || []
+  if (errors.length === 0) return
+  await downloadWorkbook(
+    '错误清单',
+    ['Excel行号', '字段', '错误说明'],
+    errors.map(e => [e.row, e.field, e.message]),
+    `导入错误清单_${form.year || ''}.xlsx`,
+  )
+}
+
+/** 下载模板 */
+const downloadTemplate = async () => {
+  // 九年级报名表（学校）—— 由服务端生成，列与业务规则一致
+  if (isRegistrationMode.value) {
+    try {
+      await registrationApi.downloadTemplate()
+    } catch (e: any) {
+      ElMessage.error('模板下载失败：' + (e?.message || ''))
+    }
+    return
+  }
+  // 九年级成绩模板（管理员）—— 带「长跑项目」「球类项目」列，便于与报名信息核对
+  if (isNineScoreMode.value) {
+    try {
+      await registrationApi.downloadScoreTemplate()
+    } catch (e: any) {
+      ElMessage.error('模板下载失败：' + (e?.message || ''))
+    }
+    return
+  }
+
+  const level = form.gradeLevel
+  if (!level) return
+  const year = form.year || '2026'
+  const templates: Record<string, { headers: string[]; sample: any[][]; title: string }> = {
+    seven: {
+      headers: ['学校', '姓名', '身份证', '毕业年份', '年级', '出勤率成绩', '体育考试成绩', '体测成绩', '合计', '备注'],
+      sample: [
+        [authStore.userSchoolName, '张三', '310101200801011234', year, '七年级', 90, 85, 88, 263, ''],
+        [authStore.userSchoolName, '李四', '310101200801015678', year, '七年级', 95, 90, 92, 277, '免测长跑'],
+      ],
+      title: '七年级体育成绩导入模板',
+    },
+    eight: {
+      headers: ['学校', '姓名', '身份证', '毕业年份', '年级', '出勤率成绩', '体育考试成绩', '体测成绩', '合计', '备注'],
+      sample: [
+        [authStore.userSchoolName, '张三', '310101200801011234', year, '八年级', 90, 85, 88, 263, ''],
+      ],
+      title: '八年级体育成绩导入模板',
+    },
+    nine: {
+      headers: ['学校', '姓名', '身份证', '毕业年份', '年级', '长跑', '跳绳', '跳远', '足(篮)球', '武术', '备注'],
+      sample: [
+        [authStore.userSchoolName, '张三', '310101200801011234', year, '九年级', 18, 19, 16, 17, 18, ''],
+      ],
+      title: '九年级体育成绩导入模板',
+    },
+  }
+  const t = templates[level]
+  await downloadWorkbook(t.title, t.headers, t.sample, `${t.title}.xlsx`)
+}
+
+onMounted(async () => {
+  // 从「九年级成绩」列表页的「导入九年级成绩」按钮进来时，直接落到九年级模式
+  if (!isSchool.value && route.query.mode === 'score9') {
+    adminMode.value = 'score9'
+  }
+  await loadYears()
+  if (isSchool.value) await loadHistory()
+})
 </script>
 
 <style scoped lang="scss">
 .grade-import-page {
-  padding: 0;
-  min-height: 100%;
+  @include page-container;
 
-  :deep(.el-button) {
-    border-radius: 8px;
+  .mode-alert {
+    margin-bottom: 16px;
   }
 
-  :deep(.el-table) {
-    border-radius: 12px;
-    border: 1px solid var(--border-light);
-    overflow: hidden;
-
-    th.el-table__cell {
-      background: var(--bg-surface) !important;
-      color: var(--text-primary);
-    }
+  .card-surface {
+    @include card-surface;
+    padding: 18px 20px;
+    margin-bottom: 16px;
   }
 
-  :deep(.el-pagination) {
-    .is-active {
-      background: var(--primary) !important;
-    }
-  }
-
-  .import-section {
-    margin-bottom: 24px;
-  }
-
-  .preview-section {
-    margin-top: 24px;
-  }
-
-  .section-header, .card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    color: var(--text-primary);
-    font-weight: 600;
-    font-size: 18px;
-    margin-bottom: 12px;
-
-    .header-actions {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-    }
+  .form-card {
+    padding-bottom: 4px;
   }
 
   .upload-area {
     :deep(.el-upload-dragger) {
       width: 100%;
-      height: 200px;
+      height: 190px;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
+      border-radius: var(--radius-lg);
+      border-style: dashed;
+      transition: border-color 0.15s, background 0.15s;
+
+      &:hover { border-color: var(--brand-cyan); background: var(--bg-hover); }
 
       .upload-icon {
-        font-size: 48px;
-        color: var(--primary);
-        margin-bottom: 16px;
+        font-size: 44px;
+        color: var(--brand-cyan);
+        margin-bottom: 12px;
       }
 
       .upload-text {
-        font-size: 16px;
+        font-size: 15px;
         color: var(--text-secondary);
-        margin-bottom: 8px;
 
         em {
-          color: var(--primary);
+          color: var(--brand-cyan);
           font-style: normal;
-          font-weight: 500;
+          font-weight: 600;
         }
       }
 
       .upload-tip {
         font-size: 12px;
         color: var(--text-muted);
+        margin-top: 6px;
       }
     }
   }
 
   .file-info {
-    margin-top: 24px;
+    margin-top: 16px;
 
-    .import-actions {
-      margin-top: 16px;
+    .file-actions {
+      margin-top: 14px;
       display: flex;
       gap: 12px;
     }
   }
 
-  .preview-table-wrapper {
-    margin-bottom: 24px;
+  .section-header {
+    @include toolbar;
+    margin-bottom: 14px;
+
+    .header-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
   }
 
-  .import-summary {
-    display: flex;
-    gap: 48px;
-    margin-bottom: 24px;
-    padding: 16px;
-    background: var(--bg-surface);
-    border-radius: 8px;
+  .diff-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+
+    .diff-item {
+      padding: 14px 16px;
+      border-radius: var(--radius-md);
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      text-align: center;
+    }
+
+    .diff-value {
+      font-size: 24px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+
+      &.new { color: var(--success); }
+      &.update { color: var(--warning); }
+      &.same { color: var(--text-muted); }
+      &.total { color: var(--accent); }
+      &.mismatch { color: var(--danger); }
+    }
+
+    .diff-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
   }
 
-  .import-actions-bottom {
+  .mismatch-alert {
+    margin-bottom: 16px;
+  }
+
+  .diff-tabs { margin-top: 4px; }
+
+  .change-tag {
+    margin: 2px 4px 2px 0;
+  }
+
+  .tip-row, .submit-row {
     display: flex;
-    justify-content: center;
-    gap: 16px;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+  }
+
+  .submit-row {
+    justify-content: flex-end;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-light);
+  }
+
+  .tip-text {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+}
+
+@media (max-width: 768px) {
+  .grade-import-page {
+    .diff-summary {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
 }
 </style>

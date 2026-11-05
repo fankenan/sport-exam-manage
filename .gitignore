@@ -7,3 +7,6 @@ server/uploads/
 .idea/
 *.tsbuildinfo
 server/data/
+
+# 本机私有配置（数据库口令等），示例见 scripts/local.env.cmd.example
+scripts/local.env.cmd

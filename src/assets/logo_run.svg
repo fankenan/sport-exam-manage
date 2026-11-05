@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="体育成绩管理系统">
+  <defs>
+    <linearGradient id="runGrad" x1="0.85" y1="0.15" x2="0.2" y2="0.95">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="0.55" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#a855f7"/>
+    </linearGradient>
+    <linearGradient id="lineGrad" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#a855f7" stop-opacity="0.25"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 速度线 -->
+  <g stroke="url(#lineGrad)" stroke-linecap="round" fill="none">
+    <path d="M22 24 H12" stroke-width="2.2"/>
+    <path d="M24 31 H6"  stroke-width="2.6"/>
+    <path d="M23 38 H10" stroke-width="2.2"/>
+    <path d="M21 45 H15" stroke-width="1.8"/>
+  </g>
+
+  <!-- 人物：单笔描边，模拟原图圆角粗线条 -->
+  <g stroke="url(#runGrad)" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- 躯干 -->
+    <path d="M33 25 L28 37" stroke-width="8"/>
+    <!-- 后摆手臂 -->
+    <path d="M32 28 L21 30" stroke-width="6.5"/>
+    <!-- 前摆手臂 -->
+    <path d="M34 27 L46 32 L50 28" stroke-width="6.5"/>
+    <!-- 前腿 -->
+    <path d="M28 37 L40 44 L38 53" stroke-width="7"/>
+    <!-- 后腿 -->
+    <path d="M28 37 L20 46 L15 48" stroke-width="7"/>
+  </g>
+
+  <!-- 头部 -->
+  <circle cx="38" cy="14" r="7.4" fill="url(#runGrad)"/>
+</svg>

@@ -12,6 +12,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { CHART_COLORS } from './chartTheme'
 
 interface Props {
   gradeSevenCount: number
@@ -22,16 +23,24 @@ interface Props {
 }
 const props = defineProps<Props>()
 
+const nf = (n: number) => (n ?? 0).toLocaleString('zh-CN')
+
 const cards = computed(() => [
-  { label: '七年级人数', value: props.gradeSevenCount, color: '#3b82f6', sub: '' },
-  { label: '八年级人数', value: props.gradeEightCount, color: '#22c55e', sub: '' },
-  { label: '九年级人数', value: props.gradeNineCount, color: '#f59e0b', sub: '' },
-  { label: '涉及学校', value: props.schoolCount, color: '#8b5cf6', sub: `中招考生 ${props.admissionCount} 人` },
+  { label: '七年级人数', value: nf(props.gradeSevenCount), color: CHART_COLORS.primary, sub: '' },
+  { label: '八年级人数', value: nf(props.gradeEightCount), color: CHART_COLORS.success, sub: '' },
+  { label: '九年级人数', value: nf(props.gradeNineCount), color: CHART_COLORS.warning, sub: '' },
+  {
+    label: '涉及学校',
+    value: nf(props.schoolCount),
+    color: CHART_COLORS.violet,
+    sub: `中招考生 ${nf(props.admissionCount)} 人`,
+  },
 ])
 </script>
 
 <style scoped lang="scss">
 .stats-cards { margin-bottom: 4px; }
+
 .stat-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -39,10 +48,28 @@ const cards = computed(() => [
   border-radius: var(--radius-md);
   padding: 16px 20px;
   margin-bottom: 12px;
-  transition: box-shadow 0.15s;
-  &:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+  transition: box-shadow 0.15s, transform 0.15s;
+
+  &:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+  }
 }
-.stat-label { font-size: 12px; color: var(--text-muted); font-weight: 500; }
-.stat-value { font-size: 28px; font-weight: 700; color: var(--text-primary); margin: 4px 0; line-height: 1.1; }
+
+.stat-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 4px 0;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
 .stat-sub { font-size: 11px; color: var(--text-muted); }
 </style>

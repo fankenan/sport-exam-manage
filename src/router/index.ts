@@ -29,6 +29,18 @@ const router = createRouter({
           meta: { title: '成绩导入', icon: 'Upload' }
         },
         {
+          path: '/submission-review',
+          name: 'submission-review',
+          component: () => import('@/views/SubmissionReviewView.vue'),
+          meta: { title: '上报审核', icon: 'CircleCheck', adminOnly: true }
+        },
+        {
+          path: '/registration-review',
+          name: 'registration-review',
+          component: () => import('@/views/RegistrationReviewView.vue'),
+          meta: { title: '报名审核', icon: 'Finished', adminOnly: true }
+        },
+        {
           path: '/grade-seven',
           name: 'grade-seven',
           component: () => import('@/views/GradeSevenView.vue'),
