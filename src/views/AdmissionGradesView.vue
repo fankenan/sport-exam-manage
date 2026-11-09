@@ -94,7 +94,6 @@
         max-height="560"
         style="width: 100%"
       >
-        <el-table-column type="index" label="序号" :width="48" :min-width="48" align="center" fixed :index="indexMethod" />
         <el-table-column prop="identityId" label="身份ID" :min-width="colWidth('identityId')" show-overflow-tooltip fixed />
         <el-table-column prop="school" label="学校名称" :min-width="colWidth('school')" show-overflow-tooltip fixed />
         <el-table-column prop="name" label="姓名" :min-width="colWidth('name')" align="center" fixed />
@@ -113,6 +112,7 @@
             <span class="score-tag">{{ row.totalScore }}</span>
           </template>
         </el-table-column>
+        <el-table-column prop="remark" label="备注" :min-width="colWidth('remark')" show-overflow-tooltip />
         <el-table-column v-if="!authStore.isSchoolUser" label="操作" :width="104" :min-width="104" align="center" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
@@ -255,10 +255,11 @@ const ADMISSION_COLUMNS = [
   { prop: 'ballSports', label: '足(篮)球' },
   { prop: 'martialArts', label: '武术' },
   { prop: 'totalScore', label: '总分', minWidth: 88 },
+  { prop: 'remark', label: '备注' },
 ]
 const { wrapRef: tableWrapRef, colWidth } = useAutoColumns(ADMISSION_COLUMNS, tableData, {
-  // 「序号」(48) 与「操作」(104) 是模板里写死的 sticky 列
-  padding: 18, min: 56, max: 240, reservedWidth: 152,
+  // 「操作」(104) 是模板里写死的 sticky 列
+  padding: 18, min: 56, max: 240, reservedWidth: 104,
 })
 
 const editDialogVisible = ref(false)
@@ -269,8 +270,6 @@ const editingId = ref('')
 const MAX_PAGE_SIZE = 500
 /** 匹配接口单次上限 50000，这里留出余量分批提交 */
 const MATCH_CHUNK_SIZE = 20000
-
-const indexMethod = (i: number) => (currentPage.value - 1) * pageSize.value + i + 1
 
 // ========== 选项加载 ==========
 const loadYears = async () => {
