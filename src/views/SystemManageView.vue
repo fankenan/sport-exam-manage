@@ -214,7 +214,7 @@ import { ref, computed, onMounted } from 'vue'
 import { Plus, Delete, CircleCheck, CircleClose, Check } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useGradeStore } from '@/stores/grade'
-import { schoolApi, authApi, dataApi, settingsApi } from '@/api'
+import { schoolApi, authApi, dataApi, settingsApi, registrationApi } from '@/api'
 
 interface Admin {
   id: number
@@ -578,22 +578,26 @@ const handleDelete = async (row: Admin) => {
   }
 }
 
-/** 统计当前成绩数据量，用于清空前提示影响范围 */
+/** 统计当前数据量，用于清空前提示影响范围（成绩表 + 九年级报名名单） */
 const countGradeRows = async () => {
-  const [seven, eight, nine, admission] = await Promise.all([
+  const [seven, eight, nine, admission, regs] = await Promise.all([
     dataApi.page('grade_seven', { page: 1, pageSize: 1 }),
     dataApi.page('grade_eight', { page: 1, pageSize: 1 }),
     dataApi.page('grade_nine', { page: 1, pageSize: 1 }),
     dataApi.page('admission', { page: 1, pageSize: 1 }),
+    registrationApi.getList({ page: 1, pageSize: 1 }),
   ])
-  return (seven?.total || 0) + (eight?.total || 0) + (nine?.total || 0) + (admission?.total || 0)
+  return {
+    grades: (seven?.total || 0) + (eight?.total || 0) + (nine?.total || 0) + (admission?.total || 0),
+    registrations: regs?.total || 0,
+  }
 }
 
 /** 清空全部成绩数据时必须逐字输入的确认短语 */
 const CLEAR_CONFIRM_PHRASE = '确认清除全部成绩数据'
 
 const handleClearAllData = async () => {
-  let total = 0
+  let total = { grades: 0, registrations: 0 }
   try {
     total = await countGradeRows()
   } catch (e: any) {
@@ -603,7 +607,8 @@ const handleClearAllData = async () => {
 
   try {
     await ElMessageBox.confirm(
-      `此操作将清除所有成绩数据（七年级、八年级、九年级、中招体育成绩，当前共 ${total} 条），不可恢复！`,
+      `此操作将清除所有成绩数据（七年级、八年级、九年级、中招体育成绩，当前共 ${total.grades} 条）`
+      + `以及九年级报名名单（${total.registrations} 人），不可恢复！`,
       '⚠️ 危险操作确认',
       {
         confirmButtonText: '确认清除',

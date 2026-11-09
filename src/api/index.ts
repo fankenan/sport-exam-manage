@@ -398,6 +398,10 @@ export const registrationApi = {
       body: JSON.stringify({ reason }),
     }),
 
+  /** 管理员删除报名记录（不回滚成绩表） */
+  remove: (id: number) =>
+    request(`/registrations/${id}`, { method: 'DELETE' }),
+
   /** 管理员直接导入报名名单（多校合并，导入即视为审核通过） */
   adminImport: (data: { rows: any[] }) =>
     request('/registrations/admin-import', {

@@ -808,13 +808,11 @@ router.post('/clear', authMiddleware, requireAdmin, auditMiddleware({ operationT
     await connection.query('DELETE FROM grade_eight')
     await connection.query('DELETE FROM grade_nine')
     await connection.query('DELETE FROM admission')
-    // 成绩表清空后，报名名单里「已导入成绩」的状态必须回退，
-    // 否则这些学生会被永久判定为已导入，重新导入时被拦下。
-    await connection.query(
-      `UPDATE grade_nine_registrations SET status = 'approved', scored_at = NULL WHERE status = 'scored'`,
-    )
+    // 报名名单也一起清掉：「清除所有数据」就该把九年级的报名信息一并删除，
+    // 否则名单会一直留在报名审核页里删不掉。
+    await connection.query('DELETE FROM grade_nine_registrations')
     await connection.commit()
-    ok(res, { _audit: { summary: '清空全部成绩数据（报名名单状态回退为待导入成绩）' } }, '数据已清空')
+    ok(res, { _audit: { summary: '清空全部成绩数据与九年级报名名单' } }, '数据已清空')
   } catch (err) {
     await connection.rollback()
     console.error('[清空数据错误]', err)

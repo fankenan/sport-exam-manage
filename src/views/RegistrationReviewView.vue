@@ -93,13 +93,13 @@
         <el-table-column prop="createdAt" label="提交时间" :min-width="colWidth('createdAt')">
           <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" :width="120" :min-width="120" align="center" fixed="right">
+        <el-table-column label="操作" :width="150" :min-width="150" align="center" fixed="right">
           <template #default="{ row }">
             <template v-if="row.status === 'pending'">
               <el-button text type="success" size="small" @click="approve(row)">通过</el-button>
               <el-button text type="danger" size="small" @click="reject(row)">驳回</el-button>
             </template>
-            <span v-else class="muted">—</span>
+            <el-button text type="danger" size="small" @click="removeRow(row)">删除</el-button>
           </template>
         </el-table-column>
         <template #empty>
@@ -275,9 +275,9 @@ const filters = reactive({ status: '', school: '', keyword: '' })
 const tableRef = ref()
 const selected = ref<any[]>([])
 
-// 复选框 44 + 操作 120 是模板里写死的列，从可用宽度里扣掉
+// 复选框 44 + 操作 150 是模板里写死的列，从可用宽度里扣掉
 const { wrapRef: tableWrapRef, colWidth } = useAutoColumns(REVIEW_COLUMNS, list, {
-  padding: 18, min: 56, max: 260, reservedWidth: 164,
+  padding: 18, min: 56, max: 260, reservedWidth: 194,
 })
 
 const scoreDialogVisible = ref(false)
@@ -413,6 +413,32 @@ const reject = async (row: any) => {
     ElMessage.error('驳回失败：' + (err.message || ''))
   } finally {
     acting.value = false
+  }
+}
+
+// ========== 删除报名记录 ==========
+
+const removeRow = async (row: any) => {
+  const tip = row.status === 'scored'
+    ? `【${row.school} - ${row.name}】已导入成绩，删除报名记录不会删除成绩表里的分数。确定删除吗？`
+    : `确定删除【${row.school} - ${row.name}】的报名记录吗？删除后无法恢复。`
+  try {
+    await ElMessageBox.confirm(tip, '删除报名记录', {
+      type: 'warning',
+      confirmButtonText: '确认删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
+    })
+  } catch {
+    return
+  }
+
+  try {
+    await registrationApi.remove(row.id)
+    ElMessage.success('已删除')
+    await load()
+  } catch (err: any) {
+    ElMessage.error('删除失败：' + (err.message || ''))
   }
 }
 
