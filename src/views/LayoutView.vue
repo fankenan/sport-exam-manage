@@ -12,7 +12,7 @@
             <span class="sub">SPORT GRADE</span>
           </div>
         </div>
-        <button class="collapse-btn" @click="toggleSidebar" :title="isCollapsed ? '展开菜单' : '收起菜单'">
+        <button class="collapse-btn" @click="isCollapsed = !isCollapsed" :title="isCollapsed ? '展开菜单' : '收起菜单'">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path v-if="!isCollapsed" d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
             <path v-else d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
