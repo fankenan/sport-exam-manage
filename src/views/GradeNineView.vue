@@ -15,6 +15,7 @@ import GradeListView, { type ColumnConfig } from '@/components/GradeListView.vue
 const columns: ColumnConfig[] = [
   { prop: 'school', label: '学校', showOverflowTooltip: true, fixed: true },
   { prop: 'name', label: '姓名', width: '100', align: 'center', fixed: true },
+  { prop: 'gender', label: '性别', width: '64', align: 'center', fixed: true },
   { prop: 'identityId', label: '身份ID', showOverflowTooltip: true },
   { prop: 'studentNumber', label: '报名序号', width: '110', align: 'center' },
   { prop: 'graduationYear', label: '毕业年份', width: '100', align: 'center' },

@@ -127,11 +127,13 @@ async function main() {
   check('已写入九年级成绩表', (nineAfter.json?.data?.total || 0) === 1, `total=${nineAfter.json?.data?.total}`)
   check('九年级表带出学校/姓名/报名序号/年份', nineRow?.school === '实验第二中学' && nineRow?.name === '报名甲' && nineRow?.studentNumber === '990001' && nineRow?.graduationYear === '2026',
     JSON.stringify(nineRow).slice(0, 220))
+  check('九年级表带出性别', nineRow?.gender === '男', JSON.stringify(nineRow).slice(0, 200))
 
   const admAfter = await call('/data/page/admission?keyword=310101201101055011', { token: admin })
   const admRow = (admAfter.json?.data?.list || [])[0]
   check('已写入中招体育成绩表', (admAfter.json?.data?.total || 0) === 1, `total=${admAfter.json?.data?.total}`)
   check('中招表带出报名序号', admRow?.registrationNumber === '990001', JSON.stringify(admRow).slice(0, 200))
+  check('中招表带出性别', admRow?.gender === '男', JSON.stringify(admRow).slice(0, 200))
 
   // ---------- 7. 导入成绩（性别/项目校验） ----------
   console.log('\n[6] 管理员导入成绩')

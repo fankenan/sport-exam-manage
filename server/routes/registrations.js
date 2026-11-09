@@ -495,6 +495,7 @@ async function writeRegistrationToTables(connection, reg) {
     id: `nine_${reg.identity_id}`,
     school: reg.school,
     name: reg.name,
+    gender: reg.gender || '',
     id_card: reg.id_card,
     identity_id: reg.identity_id,
     student_number: reg.registration_number,
@@ -507,7 +508,7 @@ async function writeRegistrationToTables(connection, reg) {
   }
   applyDerivedFields('grade_nine', [nineRow])
   await upsertRow(connection, 'grade_nine', nineRow, [
-    'id', 'school', 'name', 'id_card', 'identity_id', 'student_number', 'graduation_year',
+    'id', 'school', 'name', 'gender', 'id_card', 'identity_id', 'student_number', 'graduation_year',
     'grade', 'long_run', 'rope_skipping', 'long_jump', 'ball_sports', 'martial_arts',
     'remark', 'review_status',
   ])
@@ -517,6 +518,7 @@ async function writeRegistrationToTables(connection, reg) {
     identity_id: reg.identity_id,
     school: reg.school,
     name: reg.name,
+    gender: reg.gender || '',
     id_card: reg.id_card,
     registration_number: reg.registration_number,
     graduation_year: reg.graduation_year,
@@ -530,7 +532,7 @@ async function writeRegistrationToTables(connection, reg) {
   }
   applyDerivedFields('admission', [admRow])
   await upsertRow(connection, 'admission', admRow, [
-    'id', 'identity_id', 'school', 'name', 'id_card', 'registration_number',
+    'id', 'identity_id', 'school', 'name', 'gender', 'id_card', 'registration_number',
     'graduation_year', 'grade', 'grade_seven', 'grade_eight',
     'long_run', 'rope_skipping', 'long_jump', 'ball_sports', 'martial_arts',
     'total_score', 'remark', 'review_status',
@@ -888,6 +890,7 @@ router.post('/import-scores', authMiddleware, requireAdmin, auditMiddleware({ op
         id: `nine_${m.identity_id}`,
         school: m.reg.school,
         name: m.reg.name,
+        gender: m.reg.gender || '',
         id_card: m.id_card,
         identity_id: m.identity_id,
         student_number: m.reg.registration_number,
@@ -900,7 +903,7 @@ router.post('/import-scores', authMiddleware, requireAdmin, auditMiddleware({ op
       }
       applyDerivedFields('grade_nine', [nineRow])
       await upsertRow(connection, 'grade_nine', nineRow, [
-        'id', 'school', 'name', 'id_card', 'identity_id', 'student_number', 'graduation_year',
+        'id', 'school', 'name', 'gender', 'id_card', 'identity_id', 'student_number', 'graduation_year',
         'grade', 'long_run', 'rope_skipping', 'long_jump', 'ball_sports', 'martial_arts',
         'remark', 'review_status',
       ])
@@ -910,6 +913,7 @@ router.post('/import-scores', authMiddleware, requireAdmin, auditMiddleware({ op
         identity_id: m.identity_id,
         school: m.reg.school,
         name: m.reg.name,
+        gender: m.reg.gender || '',
         id_card: m.id_card,
         registration_number: m.reg.registration_number,
         graduation_year: m.reg.graduation_year,
@@ -923,7 +927,7 @@ router.post('/import-scores', authMiddleware, requireAdmin, auditMiddleware({ op
       }
       applyDerivedFields('admission', [admRow])
       await upsertRow(connection, 'admission', admRow, [
-        'id', 'identity_id', 'school', 'name', 'id_card', 'registration_number',
+        'id', 'identity_id', 'school', 'name', 'gender', 'id_card', 'registration_number',
         'graduation_year', 'grade', 'grade_seven', 'grade_eight',
         'long_run', 'rope_skipping', 'long_jump', 'ball_sports', 'martial_arts',
         'total_score', 'remark', 'review_status',

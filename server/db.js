@@ -130,6 +130,7 @@ async function initDatabase() {
   await safeExec(initConn, `
     CREATE TABLE IF NOT EXISTS grade_nine (
       ${scoreColumns}
+      gender VARCHAR(10) DEFAULT '',
       long_run DECIMAL(10,1) DEFAULT NULL,
       rope_skipping DECIMAL(10,1) DEFAULT NULL,
       long_jump DECIMAL(10,1) DEFAULT NULL,
@@ -140,6 +141,7 @@ async function initDatabase() {
   await safeExec(initConn, `
     CREATE TABLE IF NOT EXISTS admission (
       ${scoreColumns}
+      gender VARCHAR(10) DEFAULT '',
       registration_number VARCHAR(50) DEFAULT '',
       grade_seven DECIMAL(10,1) DEFAULT NULL,
       grade_eight DECIMAL(10,1) DEFAULT NULL,
@@ -291,6 +293,9 @@ async function initDatabase() {
     ['grade_nine', 'review_remark TEXT'],
     ['admission', 'review_status VARCHAR(20) DEFAULT NULL'],
     ['admission', 'review_remark TEXT'],
+    // 九年级报名审核通过后要把性别一起带到两张成绩表
+    ['grade_nine', "gender VARCHAR(10) DEFAULT ''"],
+    ['admission', "gender VARCHAR(10) DEFAULT ''"],
   ]
   for (const [table, column] of migrations) {
     await safeExec(initConn, `ALTER TABLE ${table} ADD COLUMN ${column}`)
@@ -387,6 +392,16 @@ async function initDatabase() {
         verify_result = CASE WHEN ABS(${sum} - COALESCE(total,0)) < 0.1 THEN 1 ELSE 0 END
       WHERE total_verify IS NULL
         AND attendance_score IS NOT NULL AND exam_score IS NOT NULL AND fitness_score IS NOT NULL
+    `)
+  }
+
+  // 九年级/中招的「性别」来自报名名单：老数据补一次
+  for (const table of ['grade_nine', 'admission']) {
+    await safeExec(initConn, `
+      UPDATE ${table} t
+      JOIN grade_nine_registrations r ON r.identity_id = t.identity_id
+      SET t.gender = r.gender
+      WHERE (t.gender IS NULL OR t.gender = '') AND r.gender <> ''
     `)
   }
 

@@ -94,10 +94,11 @@
         max-height="560"
         style="width: 100%"
       >
-        <el-table-column type="index" label="序号" :width="56" :min-width="56" align="center" fixed :index="indexMethod" />
+        <el-table-column type="index" label="序号" :width="48" :min-width="48" align="center" fixed :index="indexMethod" />
         <el-table-column prop="identityId" label="身份ID" :min-width="colWidth('identityId')" show-overflow-tooltip fixed />
         <el-table-column prop="school" label="学校名称" :min-width="colWidth('school')" show-overflow-tooltip fixed />
         <el-table-column prop="name" label="姓名" :min-width="colWidth('name')" align="center" fixed />
+        <el-table-column prop="gender" label="性别" :min-width="colWidth('gender')" align="center" fixed />
         <el-table-column prop="registrationNumber" label="报名序号" :min-width="colWidth('registrationNumber')" show-overflow-tooltip />
         <el-table-column prop="graduationYear" label="毕业年份" :min-width="colWidth('graduationYear')" align="center" />
         <el-table-column prop="gradeSeven" label="七年级" :min-width="colWidth('gradeSeven')" align="center" />
@@ -112,7 +113,7 @@
             <span class="score-tag">{{ row.totalScore }}</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="!authStore.isSchoolUser" label="操作" :width="112" :min-width="112" align="center" fixed="right">
+        <el-table-column v-if="!authStore.isSchoolUser" label="操作" :width="104" :min-width="104" align="center" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
             <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
@@ -243,6 +244,7 @@ const ADMISSION_COLUMNS = [
   { prop: 'identityId', label: '身份ID' },
   { prop: 'school', label: '学校名称' },
   { prop: 'name', label: '姓名' },
+  { prop: 'gender', label: '性别' },
   { prop: 'registrationNumber', label: '报名序号' },
   { prop: 'graduationYear', label: '毕业年份' },
   { prop: 'gradeSeven', label: '七年级' },
@@ -255,8 +257,8 @@ const ADMISSION_COLUMNS = [
   { prop: 'totalScore', label: '总分', minWidth: 88 },
 ]
 const { wrapRef: tableWrapRef, colWidth } = useAutoColumns(ADMISSION_COLUMNS, tableData, {
-  // 「序号」(56) 与「操作」(112) 是模板里写死的 sticky 列
-  padding: 18, min: 56, max: 240, reservedWidth: 168,
+  // 「序号」(48) 与「操作」(104) 是模板里写死的 sticky 列
+  padding: 18, min: 56, max: 240, reservedWidth: 152,
 })
 
 const editDialogVisible = ref(false)

@@ -19,12 +19,12 @@ const GRADE_TABLE_FIELDS = {
     'total', 'total_verify', 'verify_result', 'remark', 'review_status', 'review_remark',
   ],
   grade_nine: [
-    'id', 'school', 'name', 'id_card', 'identity_id', 'student_number',
+    'id', 'school', 'name', 'gender', 'id_card', 'identity_id', 'student_number',
     'graduation_year', 'grade', 'long_run', 'rope_skipping', 'long_jump',
     'ball_sports', 'martial_arts', 'remark', 'review_status', 'review_remark',
   ],
   admission: [
-    'id', 'identity_id', 'school', 'name', 'id_card', 'registration_number', 'graduation_year',
+    'id', 'identity_id', 'school', 'name', 'gender', 'id_card', 'registration_number', 'graduation_year',
     'grade', 'grade_seven', 'grade_eight', 'long_run', 'rope_skipping', 'long_jump',
     'ball_sports', 'martial_arts', 'remark', 'total_score', 'review_status', 'review_remark',
   ],
