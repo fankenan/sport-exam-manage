@@ -993,6 +993,7 @@ const downloadTemplate = async () => {
   if (isRegistrationMode.value) {
     try {
       await registrationApi.downloadTemplate()
+      ElMessage.success('报名表模板已开始下载')
     } catch (e: any) {
       ElMessage.error('模板下载失败：' + (e?.message || ''))
     }
@@ -1002,41 +1003,64 @@ const downloadTemplate = async () => {
   if (isNineScoreMode.value) {
     try {
       await registrationApi.downloadScoreTemplate()
+      ElMessage.success('成绩模板已开始下载')
     } catch (e: any) {
       ElMessage.error('模板下载失败：' + (e?.message || ''))
     }
     return
   }
 
-  const level = form.gradeLevel
-  if (!level) return
+  // 七/八年级列结构相同，只有「年级」列的取值不同。
+  // 学校账号按所选的年级出模板；管理员要导入的是混合文件，给一份含两个年级示例的模板。
   const year = form.year || '2026'
-  const templates: Record<string, { headers: string[]; sample: any[][]; title: string }> = {
-    seven: {
-      headers: ['学校', '姓名', '身份证', '毕业年份', '年级', '出勤率成绩', '体育考试成绩', '体测成绩', '合计', '备注'],
+  const schoolName = authStore.userSchoolName || '实验第一中学'
+  const columns78 = ['学校', '姓名', '身份证', '毕业年份', '年级', '出勤率成绩', '体育考试成绩', '体测成绩', '合计', '备注']
+
+  let t: { headers: string[]; sample: any[][]; title: string }
+  if (isSchool.value) {
+    const level = form.gradeLevel
+    if (!level) {
+      ElMessage.warning('请先选择上报年级')
+      return
+    }
+    const templates: Record<string, { headers: string[]; sample: any[][]; title: string }> = {
+      seven: {
+        headers: columns78,
+        sample: [
+          [schoolName, '张三', '310101200801011234', year, '七年级', 90, 85, 88, 263, ''],
+          [schoolName, '李四', '310101200801015678', year, '七年级', 95, 90, 92, 277, '免测长跑'],
+        ],
+        title: '七年级体育成绩导入模板',
+      },
+      eight: {
+        headers: columns78,
+        sample: [
+          [schoolName, '张三', '310101200801011234', year, '八年级', 90, 85, 88, 263, ''],
+        ],
+        title: '八年级体育成绩导入模板',
+      },
+      nine: {
+        headers: ['学校', '姓名', '身份证', '毕业年份', '年级', '长跑', '跳绳', '跳远', '足(篮)球', '武术', '备注'],
+        sample: [
+          [schoolName, '张三', '310101200801011234', year, '九年级', 18, 19, 16, 17, 18, ''],
+        ],
+        title: '九年级体育成绩导入模板',
+      },
+    }
+    t = templates[level]
+  } else {
+    t = {
+      headers: columns78,
       sample: [
-        [authStore.userSchoolName, '张三', '310101200801011234', year, '七年级', 90, 85, 88, 263, ''],
-        [authStore.userSchoolName, '李四', '310101200801015678', year, '七年级', 95, 90, 92, 277, '免测长跑'],
+        [schoolName, '张三', '310101200801011234', year, '七年级', 90, 85, 88, 263, ''],
+        [schoolName, '李四', '310101200801015678', year, '八年级', 95, 90, 92, 277, ''],
       ],
-      title: '七年级体育成绩导入模板',
-    },
-    eight: {
-      headers: ['学校', '姓名', '身份证', '毕业年份', '年级', '出勤率成绩', '体育考试成绩', '体测成绩', '合计', '备注'],
-      sample: [
-        [authStore.userSchoolName, '张三', '310101200801011234', year, '八年级', 90, 85, 88, 263, ''],
-      ],
-      title: '八年级体育成绩导入模板',
-    },
-    nine: {
-      headers: ['学校', '姓名', '身份证', '毕业年份', '年级', '长跑', '跳绳', '跳远', '足(篮)球', '武术', '备注'],
-      sample: [
-        [authStore.userSchoolName, '张三', '310101200801011234', year, '九年级', 18, 19, 16, 17, 18, ''],
-      ],
-      title: '九年级体育成绩导入模板',
-    },
+      title: '七、八年级体育成绩导入模板',
+    }
   }
-  const t = templates[level]
+
   await downloadWorkbook(t.title, t.headers, t.sample, `${t.title}.xlsx`)
+  ElMessage.success(`已生成并下载「${t.title}」`)
 }
 
 onMounted(async () => {
